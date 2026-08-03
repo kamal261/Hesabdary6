@@ -54,8 +54,8 @@ fun TransactionListScreen(
                 Icon(Icons.Filled.Add, contentDescription = "افزودن دستی")
             }
         }
-    ) { padding ->
-        Column(modifier = Modifier.padding(padding).fillMaxSize()) {
+    ) { innerPadding ->
+        Column(modifier = Modifier.padding(innerPadding).fillMaxSize()) {
             OutlinedTextField(
                 value = query,
                 onValueChange = { query = it },
