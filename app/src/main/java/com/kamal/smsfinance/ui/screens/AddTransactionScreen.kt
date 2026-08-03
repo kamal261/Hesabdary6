@@ -56,7 +56,7 @@ fun AddTransactionScreen(
     ) { innerPadding ->
         Column(
             modifier = Modifier
-                .padding(padding)
+                .padding(innerPadding)
                 .padding(16.dp)
                 .verticalScroll(rememberScrollState())
                 .fillMaxSize(),
