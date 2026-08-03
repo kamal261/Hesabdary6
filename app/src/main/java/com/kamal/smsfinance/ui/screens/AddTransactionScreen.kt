@@ -53,7 +53,7 @@ fun AddTransactionScreen(
                 }
             )
         }
-    ) { padding ->
+    ) { innerPadding ->
         Column(
             modifier = Modifier
                 .padding(padding)
