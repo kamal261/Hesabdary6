@@ -46,9 +46,9 @@ fun CounterpartyProfileScreen(
                 }
             )
         }
-    ) { padding ->
+    ) { innerPadding ->
         LazyColumn(
-            modifier = Modifier.padding(padding).fillMaxSize(),
+            modifier = Modifier.padding(innerPadding).fillMaxSize(),
             contentPadding = PaddingValues(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
