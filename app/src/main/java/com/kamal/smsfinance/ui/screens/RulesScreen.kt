@@ -41,8 +41,8 @@ fun RulesScreen(
                 Icon(Icons.Filled.Add, contentDescription = "افزودن قانون")
             }
         }
-    ) { padding ->
-        Column(modifier = Modifier.padding(padding).fillMaxSize()) {
+    ) { innerPadding ->
+        Column(modifier = Modifier.padding(innerPadding).fillMaxSize()) {
             Text(
                 "هر پیامک بانکی که شامل «عبارت تشخیص» یکی از این قوانین باشد، خودکار به دسته/طرف‌حساب مربوطه اختصاص می‌یابد. این قوانین فقط پیشنهاد دسته‌بندی می‌دهند و هیچ مبلغ یا تراکنشی را حذف/تغییر نمی‌دهند.",
                 style = MaterialTheme.typography.bodyMedium,
