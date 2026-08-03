@@ -36,9 +36,9 @@ fun CategoriesScreen(
                 Icon(Icons.Filled.Add, contentDescription = "افزودن دسته")
             }
         }
-    ) { padding ->
+    ) { innerPadding ->
         LazyColumn(
-            modifier = Modifier.padding(padding).fillMaxSize(),
+            modifier = Modifier.padding(innerPadding).fillMaxSize(),
             contentPadding = PaddingValues(16.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
