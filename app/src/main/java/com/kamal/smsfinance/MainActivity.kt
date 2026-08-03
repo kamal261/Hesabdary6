@@ -196,8 +196,8 @@ private fun AppRoot(viewModel: TransactionViewModel) {
                 )
             }
         }
-    ) { padding ->
-        androidx.compose.foundation.layout.Box(modifier = Modifier.padding(padding)) {
+    ) { innerPadding ->
+        androidx.compose.foundation.layout.Box(modifier = Modifier.padding(innerPadding)) {
             when (tab) {
                 Tab.LIST -> TransactionListScreen(
                     transactions = transactions,
