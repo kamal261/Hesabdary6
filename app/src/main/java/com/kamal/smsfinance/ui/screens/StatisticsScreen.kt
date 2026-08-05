@@ -22,7 +22,8 @@ fun StatisticsScreen(
     debtPaid: Long,
     byBank: Map<String, Long>,
     byCategory: Map<String, Long>,
-    recurring: List<Transaction>
+    recurring: List<Transaction>,
+    onBankClick: (String) -> Unit = {}
 ) {
     val balance = totalIncome - totalExpense
 
@@ -82,13 +83,21 @@ fun StatisticsScreen(
         if (byBank.isNotEmpty()) {
             item { Text("تفکیک بر اساس بانک", style = MaterialTheme.typography.titleLarge) }
             items(byBank.entries.sortedByDescending { it.value }.toList()) { (bank, amount) ->
-                ElevatedCard(modifier = Modifier.fillMaxWidth()) {
+                ElevatedCard(
+                    modifier = Modifier.fillMaxWidth(),
+                    onClick = { onBankClick(bank) }
+                ) {
                     Row(
                         modifier = Modifier.fillMaxWidth().padding(16.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(bank, style = MaterialTheme.typography.bodyLarge)
-                        Text("${"%,d".format(amount)} ت", fontWeight = FontWeight.Medium)
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text("${"%,d".format(amount)} ت", fontWeight = FontWeight.Medium)
+                            Spacer(Modifier.width(4.dp))
+                            Icon(Icons.Filled.ChevronRight, contentDescription = null, tint = MaterialTheme.colorScheme.outline)
+                        }
                     }
                 }
             }

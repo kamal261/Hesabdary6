@@ -36,6 +36,8 @@ private sealed class Overlay {
     object Rules : Overlay()
     object UnidentifiedSms : Overlay()
     data class CounterpartyProfile(val id: Long) : Overlay()
+    data class SmsContext(val sender: String, val timestamp: Long) : Overlay()
+    data class BankTransactions(val bank: String) : Overlay()
 }
 
 class MainActivity : ComponentActivity() {
@@ -82,6 +84,8 @@ private fun AppRoot(viewModel: TransactionViewModel) {
     val smallAmountEnabled by viewModel.smallAmountEnabled.collectAsState()
     val smallAmountThreshold by viewModel.smallAmountThreshold.collectAsState()
     val smallAmountCategoryId by viewModel.smallAmountCategoryId.collectAsState()
+    val initialScanDone by viewModel.initialScanDone.collectAsState()
+    var showInitialScanDialog by remember { mutableStateOf(!initialScanDone) }
 
     var tab by remember { mutableStateOf(Tab.LIST) }
     var overlay by remember { mutableStateOf<Overlay?>(null) }
@@ -129,6 +133,37 @@ private fun AppRoot(viewModel: TransactionViewModel) {
             },
             dismissButton = {
                 TextButton(onClick = { viewModel.cancelPendingRestore() }) { Text("انصراف") }
+            }
+        )
+    }
+
+    // First-run dialog: let the user choose how far back to scan SMS.
+    if (showInitialScanDialog) {
+        AlertDialog(
+            onDismissRequest = { /* cannot dismiss — must choose */ },
+            title = { Text("اسکن اولیه پیامک‌ها") },
+            text = {
+                Column {
+                    Text(
+                        "برای شروع، تراکنش‌های چه مدت زمانی را از پیامک‌ها وارد کنیم؟\n" +
+                            "(بعداً از دکمه «اسکن پیامک‌ها» می‌توانید کل صندوق را اسکن کنید.)",
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                    Spacer(Modifier.height(12.dp))
+                    val options = listOf(7L to "یک هفته اخیر", 30L to "یک ماه اخیر", 90L to "سه ماه اخیر", 365L to "یک سال اخیر", 0L to "همه پیامک‌ها")
+                    options.forEach { (days, label) ->
+                        Button(
+                            onClick = {
+                                viewModel.setInitialScanWindowDays(days)
+                                showInitialScanDialog = false
+                                if (days == 0L) viewModel.scanInboxFull() else viewModel.scanInbox()
+                            },
+                            modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
+                        ) {
+                            Text(label)
+                        }
+                    }
+                }
             }
         )
     }
@@ -203,6 +238,26 @@ private fun AppRoot(viewModel: TransactionViewModel) {
             }
             return
         }
+        is Overlay.SmsContext -> {
+            SmsContextScreen(
+                sender = current.sender,
+                txnTimestamp = current.timestamp,
+                onBack = { overlay = null }
+            )
+            return
+        }
+        is Overlay.BankTransactions -> {
+            val bankTxns = remember(current.bank, transactions) {
+                transactions.filter { it.bankName == current.bank }
+            }
+            BankTransactionsScreen(
+                bank = current.bank,
+                transactions = bankTxns,
+                categories = categories,
+                onBack = { overlay = null }
+            )
+            return
+        }
         null -> Unit
     }
 
@@ -257,14 +312,15 @@ private fun AppRoot(viewModel: TransactionViewModel) {
                             totalIOwe = iOwe,
                             checksDueSoonCount = checksDueSoon.size
                         ),
-                        onScanInbox = { viewModel.scanInbox() },
+                        onScanInbox = { viewModel.scanInboxFull() },
                         onDelete = { viewModel.deleteTransaction(it) },
                         onAddManual = { overlay = Overlay.AddManual },
                         onAssignCategory = { txn, catId -> viewModel.assignCategory(txn.id, catId) },
                         onCreateRule = { pattern, categoryId -> viewModel.addRule(pattern, categoryId, null) },
                         onOpenUnidentifiedSms = { overlay = Overlay.UnidentifiedSms },
                         onOpenChecks = { tab = Tab.CHECKS },
-                        onOpenCounterparties = { tab = Tab.COUNTERPARTIES }
+                        onOpenCounterparties = { tab = Tab.COUNTERPARTIES },
+                        onOpenSmsContext = { sender, timestamp -> overlay = Overlay.SmsContext(sender, timestamp) }
                     )
                 }
                 Tab.COUNTERPARTIES -> CounterpartiesScreen(
@@ -298,7 +354,8 @@ private fun AppRoot(viewModel: TransactionViewModel) {
                     debtPaid = viewModel.debtPaid(transactions, categories),
                     byBank = viewModel.byBank(transactions),
                     byCategory = viewModel.byCategory(transactions, categories),
-                    recurring = viewModel.recurringOnly(transactions)
+                    recurring = viewModel.recurringOnly(transactions),
+                    onBankClick = { bank -> overlay = Overlay.BankTransactions(bank) }
                 )
                 Tab.SETTINGS -> SettingsScreen(
                     themeMode = themeMode,

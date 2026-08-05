@@ -16,7 +16,7 @@ import com.kamal.smsfinance.data.Transaction
 import com.kamal.smsfinance.data.TransactionType
 import com.kamal.smsfinance.ui.theme.GreenIncome
 import com.kamal.smsfinance.ui.theme.RedExpense
-import java.text.SimpleDateFormat
+import com.kamal.smsfinance.util.JalaliDate
 import java.util.Date
 import java.util.Locale
 
@@ -154,7 +154,7 @@ fun CounterpartyProfileScreen(
 private fun CounterpartyTransactionRow(txn: Transaction) {
     val isIncome = txn.type == TransactionType.INCOME
     val color = if (isIncome) GreenIncome else RedExpense
-    val dateStr = remember(txn.date) { SimpleDateFormat("yyyy/MM/dd", Locale.US).format(Date(txn.date)) }
+    val dateStr = remember(txn.date) { JalaliDate.formatDate(txn.date) }
 
     ElevatedCard(modifier = Modifier.fillMaxWidth()) {
         Row(

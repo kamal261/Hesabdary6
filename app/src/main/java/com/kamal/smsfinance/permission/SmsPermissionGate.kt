@@ -19,6 +19,11 @@ import androidx.compose.ui.unit.dp
  * is available -- that's the one the app truly can't function without;
  * RECEIVE_SMS only affects real-time auto-import and notifications degrade
  * gracefully without POST_NOTIFICATIONS.
+ *
+ * Permission is requested ONLY on first run: once granted, it is remembered
+ * by the OS and this gate passes through silently on every later launch --
+ * the app never re-asks, and scanning happens through the first-run dialog,
+ * not automatically here.
  */
 @Composable
 fun SmsPermissionGate(

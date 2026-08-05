@@ -24,6 +24,28 @@ class SettingsStore(private val context: Context) {
     private val SMALL_AMOUNT_THRESHOLD_KEY = longPreferencesKey("small_amount_threshold")
     private val SMALL_AMOUNT_CATEGORY_KEY = longPreferencesKey("small_amount_category_id")
 
+    // First-run scan: window chosen by the user on first launch; after the
+    // initial scan we remember it so the app never asks/rescans automatically.
+    private val INITIAL_SCAN_WINDOW_DAYS_KEY = longPreferencesKey("initial_scan_window_days")
+    private val INITIAL_SCAN_DONE_KEY = booleanPreferencesKey("initial_scan_done")
+    private val LAST_SCAN_TIMESTAMP_KEY = longPreferencesKey("last_scan_timestamp")
+
+    val initialScanWindowDays: Flow<Long> = context.dataStore.data.map { it[INITIAL_SCAN_WINDOW_DAYS_KEY] ?: 7L }
+    val initialScanDone: Flow<Boolean> = context.dataStore.data.map { it[INITIAL_SCAN_DONE_KEY] ?: false }
+    val lastScanTimestamp: Flow<Long> = context.dataStore.data.map { it[LAST_SCAN_TIMESTAMP_KEY] ?: 0L }
+
+    suspend fun setInitialScanWindowDays(days: Long) {
+        context.dataStore.edit { it[INITIAL_SCAN_WINDOW_DAYS_KEY] = days }
+    }
+
+    suspend fun setInitialScanDone(done: Boolean) {
+        context.dataStore.edit { it[INITIAL_SCAN_DONE_KEY] = done }
+    }
+
+    suspend fun setLastScanTimestamp(ts: Long) {
+        context.dataStore.edit { it[LAST_SCAN_TIMESTAMP_KEY] = ts }
+    }
+
     val themeMode: Flow<ThemeMode> = context.dataStore.data.map { prefs ->
         prefs[THEME_KEY]?.let { runCatching { ThemeMode.valueOf(it) }.getOrNull() } ?: ThemeMode.SYSTEM
     }

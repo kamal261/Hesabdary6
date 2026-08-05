@@ -99,6 +99,45 @@ object SmsParser {
         "تبلیغ", "کد فعال", "OTP"
     )
 
+    // Strong negative signals — presence of any immediately marks the message
+    // as NOT a genuine transaction (loan/credit promos, OTP codes, courier
+    // parcels, phishing, contests with links). Based on researched Iranian
+    // bank SMS patterns: genuine transaction SMS never contain these.
+    // NOTE: "رسید" is intentionally NOT here — a genuine "رسید خرید" must pass;
+    // رسید+link (the card-to-card scam) is already caught by URL_REGEX below.
+    private val PROMO_REJECT_KEYWORDS = listOf(
+        "تسهیلات", "قرض الحسنه", "ضامن", "قسط", "قرعه‌کشی", "جایزه",
+        "به ارزش", "اعتبار", "دریافت و ثبت", "برنده", "مشاوره",
+        "اسم کارت", "سهام عدالت", "ابلاغیه", "کد ملی", "به‌روزرسانی"
+    )
+
+    // OTP footer signatures that precede a one-time code (never a transaction).
+    private val OTP_SIGNATURES = listOf(
+        "رمز پویا", "رمز یکبار مصرف", "کد تایید", "رمز تأیید",
+        "رمز اینترنتی", "کد فعال‌سازی", "OTP"
+    )
+
+    // Any URL — genuine bank transaction SMS never contain links.
+    private val URL_REGEX = Regex("""https?://|www\.|t\.me/|bit\.ly/|\.ir/|\.com/""")
+
+    // Real transaction SMS almost always report a balance (مانده/موجودی).
+    // Used as a REQUIRED anchor for terse/keyword-less cases, and as a strong
+    // positive confirmation when a type+amount is otherwise ambiguous.
+    private val BALANCE_KEYWORD_REGEX = Regex("""(مانده|موجودی|مبلغ مانده|موجودی حساب)""")
+
+    private fun looksPromotionalOrOtp(body: String): Boolean {
+        // URLs are a hard kill: genuine bank transaction SMS never carry links.
+        if (URL_REGEX.containsMatchIn(body)) return true
+
+        // OTP signatures: "رمز پویا ... code" etc. — these are 2FA, not txn.
+        if (OTP_SIGNATURES.any { body.contains(it) }) return true
+
+        // Marketing loan/credit/contest words.
+        if (PROMO_REJECT_KEYWORDS.any { body.contains(it) }) return true
+
+        return false
+    }
+
     private val PERSIAN_DIGITS = "۰۱۲۳۴۵۶۷۸۹"
 
     // Matches amounts like: "مبلغ: 500,000 تومان", "500000 ريال", "1,250,000ریال"
@@ -124,20 +163,76 @@ object SmsParser {
     private val SIGNED_AMOUNT_REGEX = Regex("""([+\-])\s*([\d۰-۹][\d۰-۹,٬]*)""")
     private val BALANCE_LINE_REGEX = Regex("""(مانده|موجودی)[:\s]*[\d۰-۹][\d۰-۹,٬]*""")
 
-    // Card/account tail, e.g. "...1234" or "حساب ****1234"
-    private val TAIL_REGEX = Regex("""[*x]{2,}(\d{4})""")
+    // Card/account tail, e.g. "...1234", "حساب ****1234", or "621986*0771"
+    private val TAIL_REGEX = Regex("""([*x]{2,}\d{4})|(\d{6}\*\d{4})""")
+
+    // Phrases that only appear in genuine bank debit alerts (bill payment
+    // deducted from the account). "بابت قبض ... از حساب شما پرید" is the
+    // classic bank phrasing -- telecoms say "پرداخت موفق بود", not "پرید".
+    private val BANK_DEBIT_PHRASES = listOf("از حساب شما پرید", "از حساب شما کسر", "از حساب شما برداشت")
+
+    // Transaction identifiers that only appear on genuine bank/ledger SMS.
+    private val TXN_ID_KEYWORDS = listOf("شناسه", "کد پیگیری", "شماره تراکنش", "پیگیری")
+
+    /**
+     * Genuine bank transactions come ONLY from the bank's own sender line
+     * (shortcode like 20000 / 2000766 / 3000766 / 15560026, or a bank name
+     * like Mellat / TejaratBank / بلو). Service-provider SMS (telecom bill
+     * payment, courier, loan ads) look similar on the surface -- amount +
+     * transaction id -- but are NOT sent by a bank and must never be filed.
+     *
+     * Acceptance rule:
+     * 1. sender is a known bank sender, OR
+     * 2. the body names the bank itself (e.g. "بلو برداشت پول ..." -- بلو's
+     *    real-world SMS carry the bank name in the body, not the sender), OR
+     * 3. the body carries a strong bank signature (a balance line AND a card
+     *    tail / transaction id).
+     * A lone amount + "شناسه تراکنش" from a non-bank sender (e.g. "پرداخت
+     * صورتحساب ... انجام شد" from a telecom) is rejected.
+     */
+    private fun isBankOriginated(sender: String, body: String): Boolean {
+        if (isKnownBankSender(sender)) return true
+        // Some banks identify themselves only in the body. Require the bank
+        // name to be followed by a separator so "بلوتوث" is not mistaken for
+        // the bank "بلو".
+        if (BANK_SENDERS.values.any { ids ->
+                ids.any { id ->
+                    id.length >= 3 && (body.contains("$id ") || body.contains("$id\n") || body.contains("$id،"))
+                }
+            }) return true
+        // A real balance line (مانده/موجودی + number) is a near-universal
+        // bank signature: telecoms, shops, ads and personal SMS never report
+        // the account balance. If the body has one, treat it as bank-originated.
+        if (BALANCE_LINE_REGEX.containsMatchIn(body)) return true
+        // Classic bank debit phrasing ("از حساب شما پرید/کسر/برداشت").
+        if (BANK_DEBIT_PHRASES.any { body.contains(it) }) return true
+        // A card/account tail (****1234 or 621986*0771) is a strong bank
+        // signature -- telecoms, shops and ads never print one. It is
+        // sufficient on its own.
+        if (TAIL_REGEX.containsMatchIn(body)) return true
+        // A transaction id without any other bank signal is NOT enough:
+        // telecom bill-payment confirmations also print "شناسه تراکنش".
+        return TXN_ID_KEYWORDS.any { body.contains(it) } && BALANCE_KEYWORD_REGEX.containsMatchIn(body)
+    }
 
     fun parse(sender: String, body: String, timestamp: Long): SmsParseResult {
         if (body.isBlank()) return SmsParseResult.Ignored
         if (IGNORE_KEYWORDS.any { body.contains(it) }) return SmsParseResult.Ignored
+        // Hard-reject promotional/OTP/phishing SMS before any amount/type parsing.
+        // A message that has a URL, an OTP signature, or a marketing keyword is
+        // never a genuine bank transaction, regardless of what numbers it carries.
+        if (looksPromotionalOrOtp(body)) return SmsParseResult.Ignored
 
         val type = identifyType(body)
         val amount = if (type != null) extractAmountToman(body) else null
 
-        if (type != null && amount != null && amount > 0) {
+        if (type != null && amount != null && amount > 0 && isBankOriginated(sender, body)) {
             val bank = identifyBank(sender, body) ?: "نامشخص"
             val tail = TAIL_REGEX.find(body)?.groupValues?.get(1)
             val description = buildDescription(body, type)
+            // Use the transaction date printed INSIDE the SMS when present;
+            // fall back to the delivery timestamp otherwise.
+            val txnDate = SmsDateExtractor.extract(body, timestamp)
             return SmsParseResult.Recognized(
                 ParsedSms(
                     sender = sender,
@@ -145,7 +240,7 @@ object SmsParser {
                     type = type,
                     bankName = bank,
                     description = description,
-                    timestamp = timestamp,
+                    timestamp = txnDate,
                     rawSms = body,
                     accountTail = tail
                 )

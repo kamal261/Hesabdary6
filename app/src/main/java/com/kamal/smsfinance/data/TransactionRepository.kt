@@ -78,17 +78,46 @@ class TransactionRepository(
     }
 
     /**
-     * Scans the full SMS inbox (READ_SMS) once, parses every recognizable bank
-     * message, and stores new ones silently (no notification). Returns how
-     * many new transactions were added. Safe to call repeatedly -- existing
-     * rows are skipped via existsExact().
+     * Scans the SMS inbox and imports recognized bank transactions.
+     *
+     * First run (user-chosen window): scans only the last N days the user
+     * picked on first launch (default 7), then marks the initial scan done.
+     * After that, automatic scans only pick up SMS newer than the last scan
+     * (never a full re-scan, and never re-asks for permission).
      */
     suspend fun scanInboxAndImport(): Int {
+        val messages = SmsReaderUtil.readInbox(context)
+        if (messages.isEmpty()) return 0
+
+        val initialDone = settings.initialScanDone.first()
+        val cutoff = if (!initialDone) {
+            // First run: only the user-chosen window (e.g. last 7 days).
+            val windowDays = settings.initialScanWindowDays.first()
+            System.currentTimeMillis() - TimeUnit.DAYS.toMillis(windowDays)
+        } else {
+            // Later automatic runs: only messages newer than the last scan.
+            settings.lastScanTimestamp.first().takeIf { it > 0 } ?: 0L
+        }
+
+        var added = 0
+        for (msg in messages) {
+            if (msg.timestamp < cutoff) continue
+            if (handleParseResult(SmsParser.parse(msg.sender, msg.body, msg.timestamp))) added++
+        }
+        settings.setLastScanTimestamp(System.currentTimeMillis())
+        settings.setInitialScanDone(true)
+        return added
+    }
+
+    /** Manual "scan" button: full re-scan of the whole inbox (dedup prevents duplicates). */
+    suspend fun scanInboxAndImportFull(): Int {
         val messages = SmsReaderUtil.readInbox(context)
         var added = 0
         for (msg in messages) {
             if (handleParseResult(SmsParser.parse(msg.sender, msg.body, msg.timestamp))) added++
         }
+        settings.setLastScanTimestamp(System.currentTimeMillis())
+        settings.setInitialScanDone(true)
         return added
     }
 

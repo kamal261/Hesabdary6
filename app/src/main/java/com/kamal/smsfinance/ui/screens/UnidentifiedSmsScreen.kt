@@ -10,7 +10,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.kamal.smsfinance.data.UnidentifiedSms
-import java.text.SimpleDateFormat
+import com.kamal.smsfinance.util.JalaliDate
 import java.util.Date
 import java.util.Locale
 
@@ -66,7 +66,7 @@ fun UnidentifiedSmsScreen(
 @Composable
 private fun UnidentifiedSmsCard(item: UnidentifiedSms, onDismiss: () -> Unit) {
     val dateStr = remember(item.timestamp) {
-        SimpleDateFormat("yyyy/MM/dd - HH:mm", Locale.US).format(Date(item.timestamp))
+        JalaliDate.formatDateTime(item.timestamp)
     }
     ElevatedCard(modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp)) {
