@@ -67,11 +67,12 @@ fun BankTransactionsScreen(
                             verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
                         ) {
                             Column(Modifier.weight(1f)) {
+                                val amountText = "%,d".format(txn.amountToman)
                                 Text(
-                                    "${\"%,d\".format(txn.amountToman)} تومان",
+                                    "$amountText تومان",
                                     style = MaterialTheme.typography.titleMedium,
-                                    color = color,
-                                    fontWeight = FontWeight.Bold
+                                    fontWeight = FontWeight.Bold,
+                                    color = color
                                 )
                                 Text(
                                     txn.description,
