@@ -15,8 +15,8 @@ object JalaliDate {
     private fun toJalali(gy: Int, gm: Int, gd: Int): Triple<Int, Int, Int> {
         val gDays = intArrayOf(0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334)
         var gy2 = if (gm > 2) gy + 1 else gy
-        val days = 355666 + (365 * gy) + ((gy2 + 3) / 4) - ((gy2 + 99) / 100) + ((gy2 + 399) / 400) + gd + gDays[gm - 1]
-        val jy = -1595 + (33 * (days / 12053))
+        var days = 355666 + (365 * gy) + ((gy2 + 3) / 4) - ((gy2 + 99) / 100) + ((gy2 + 399) / 400) + gd + gDays[gm - 1]
+        var jy = -1595 + (33 * (days / 12053))
         days %= 12053
         jy += 4 * (days / 1461)
         days %= 1461
