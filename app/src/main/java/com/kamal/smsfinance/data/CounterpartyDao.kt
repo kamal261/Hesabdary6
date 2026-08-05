@@ -43,6 +43,9 @@ interface CounterpartyDao {
     """)
     fun balanceFor(id: Long): Flow<Long>
 
+    @Query("SELECT COUNT(*) FROM counterparties WHERE name = :name COLLATE NOCASE")
+    suspend fun countByName(name: String): Int
+
     @Query("SELECT COALESCE(SUM(amountToman), 0) FROM transactions WHERE counterpartyId = :id")
     fun totalVolumeFor(id: Long): Flow<Long>
 }

@@ -1,3 +1,4 @@
+// SmsFinance file version: 1
 package com.kamal.smsfinance.ui.screens
 
 import androidx.compose.foundation.layout.*
@@ -27,9 +28,12 @@ fun CounterpartyProfileScreen(
     balance: Long,
     totalVolume: Long,
     onBack: () -> Unit,
-    onDelete: () -> Unit
+    onDelete: () -> Unit,
+    onSaveNotes: (String) -> Unit
 ) {
     var showDeleteConfirm by remember { mutableStateOf(false) }
+    var notesText by remember(counterparty.id) { mutableStateOf(counterparty.notes ?: "") }
+    val notesDirty = notesText != (counterparty.notes ?: "")
     val typeLabel = if (counterparty.type == CounterpartyType.CUSTOMER) "مشتری" else "عامل / کارگر"
     val balanceColor = if (balance >= 0) GreenIncome else RedExpense
     val balanceLabel = if (balance >= 0) "طلب شما از او" else "بدهی شما به او"
@@ -46,9 +50,9 @@ fun CounterpartyProfileScreen(
                 }
             )
         }
-    ) { innerPadding ->
+    ) { padding ->
         LazyColumn(
-            modifier = Modifier.padding(innerPadding).fillMaxSize(),
+            modifier = Modifier.padding(padding).fillMaxSize(),
             contentPadding = PaddingValues(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
@@ -98,6 +102,32 @@ fun CounterpartyProfileScreen(
             } else {
                 items(transactions, key = { it.id }) { txn ->
                     CounterpartyTransactionRow(txn)
+                }
+            }
+
+            item {
+                ElevatedCard(modifier = Modifier.fillMaxWidth()) {
+                    Column(Modifier.padding(16.dp)) {
+                        Text("یادداشت", style = MaterialTheme.typography.titleMedium)
+                        Text(
+                            "برای اطلاعات موقت مثل تعداد سفارش، تاریخ تحویل، یا وضعیت کار",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Spacer(Modifier.height(8.dp))
+                        OutlinedTextField(
+                            value = notesText,
+                            onValueChange = { notesText = it },
+                            modifier = Modifier.fillMaxWidth(),
+                            minLines = 3
+                        )
+                        if (notesDirty) {
+                            Spacer(Modifier.height(8.dp))
+                            Button(onClick = { onSaveNotes(notesText) }, modifier = Modifier.align(Alignment.End)) {
+                                Text("ذخیره یادداشت")
+                            }
+                        }
+                    }
                 }
             }
 

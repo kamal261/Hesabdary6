@@ -1,3 +1,4 @@
+// SmsFinance file version: 1
 package com.kamal.smsfinance.data
 
 import androidx.room.Entity
@@ -20,5 +21,9 @@ data class Counterparty(
     val phone: String? = null,
     val address: String? = null,
     val description: String? = null,
+    // Free-text working notes (quantities, delivery dates, job status...),
+    // separate from `description` (which is set once at creation) so it can
+    // be updated freely from the profile screen without touching identity info.
+    val notes: String? = null,
     val createdAt: Long = System.currentTimeMillis()
 )

@@ -53,8 +53,8 @@ fun ChecksScreen(
                 Icon(Icons.Filled.Add, contentDescription = "افزودن چک")
             }
         }
-    ) { innerPadding ->
-        Column(modifier = Modifier.padding(innerPadding).fillMaxSize()) {
+    ) { padding ->
+        Column(modifier = Modifier.padding(padding).fillMaxSize()) {
             if (dueSoon.isNotEmpty()) {
                 DueSoonBanner(dueSoon, counterpartyById)
             }

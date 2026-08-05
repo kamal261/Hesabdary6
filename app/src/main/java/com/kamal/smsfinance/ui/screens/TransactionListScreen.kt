@@ -1,3 +1,4 @@
+// SmsFinance file version: 3 — added today-dashboard card, unidentified-SMS review banner, "only uncategorized" filter, switched category picker to the shared CategoryPicker (top-4 + search), detail dialog now shows sender/accountTail
 package com.kamal.smsfinance.ui.screens
 
 import androidx.compose.foundation.clickable
@@ -17,6 +18,8 @@ import androidx.compose.ui.unit.dp
 import com.kamal.smsfinance.data.Category
 import com.kamal.smsfinance.data.Transaction
 import com.kamal.smsfinance.data.TransactionType
+import com.kamal.smsfinance.ui.components.CategoryPicker
+import com.kamal.smsfinance.ui.components.TodayDashboardCard
 import com.kamal.smsfinance.ui.theme.GreenIncome
 import com.kamal.smsfinance.ui.theme.RedExpense
 import java.text.SimpleDateFormat
@@ -28,23 +31,29 @@ import java.util.Locale
 fun TransactionListScreen(
     transactions: List<Transaction>,
     categories: List<Category>,
+    categoryUsageCounts: Map<Long, Int>,
     recurringIds: Set<Long>,
     isLoading: Boolean,
+    unidentifiedSmsCount: Int,
+    dashboard: DashboardData,
     onScanInbox: () -> Unit,
     onDelete: (Transaction) -> Unit,
     onAddManual: () -> Unit,
     onAssignCategory: (Transaction, Long?) -> Unit,
-    onCreateRule: (pattern: String, categoryId: Long?) -> Unit
+    onCreateRule: (pattern: String, categoryId: Long?) -> Unit,
+    onOpenUnidentifiedSms: () -> Unit,
+    onOpenChecks: () -> Unit,
+    onOpenCounterparties: () -> Unit
 ) {
     var query by remember { mutableStateOf("") }
+    var onlyUncategorized by remember { mutableStateOf(false) }
     var detailFor by remember { mutableStateOf<Transaction?>(null) }
     var ruleSuggestionFor by remember { mutableStateOf<Pair<Transaction, Long>?>(null) }
 
-    val filtered = remember(transactions, query) {
-        if (query.isBlank()) transactions
-        else transactions.filter {
-            it.description.contains(query, true) || it.bankName.contains(query, true)
-        }
+    val filtered = remember(transactions, query, onlyUncategorized) {
+        transactions
+            .filter { !onlyUncategorized || it.categoryId == null }
+            .filter { query.isBlank() || it.description.contains(query, true) || it.bankName.contains(query, true) }
     }
     val categoryById = remember(categories) { categories.associateBy { it.id } }
 
@@ -54,47 +63,64 @@ fun TransactionListScreen(
                 Icon(Icons.Filled.Add, contentDescription = "افزودن دستی")
             }
         }
-    ) { innerPadding ->
-        Column(modifier = Modifier.padding(innerPadding).fillMaxSize()) {
-            OutlinedTextField(
-                value = query,
-                onValueChange = { query = it },
-                modifier = Modifier.fillMaxWidth().padding(16.dp),
-                placeholder = { Text("جستجو در تراکنش‌ها...") },
-                leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
-                singleLine = true
-            )
-
-            OutlinedButton(
-                onClick = onScanInbox,
-                enabled = !isLoading,
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp)
+    ) { padding ->
+        Column(modifier = Modifier.padding(padding).fillMaxSize()) {
+            LazyColumn(
+                contentPadding = PaddingValues(16.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                if (isLoading) {
-                    CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
-                    Spacer(Modifier.width(8.dp))
-                    Text("در حال اسکن...")
-                } else {
-                    Icon(Icons.Filled.Refresh, contentDescription = null, modifier = Modifier.size(18.dp))
-                    Spacer(Modifier.width(8.dp))
-                    Text("اسکن مجدد پیامک‌های بانکی")
+                item {
+                    TodayDashboardCard(
+                        todayIncome = dashboard.todayIncome,
+                        todayExpense = dashboard.todayExpense,
+                        estimatedProfitThisMonth = dashboard.estimatedProfitThisMonth,
+                        totalOwedToMe = dashboard.totalOwedToMe,
+                        totalIOwe = dashboard.totalIOwe,
+                        checksDueSoonCount = dashboard.checksDueSoonCount,
+                        onOpenChecks = onOpenChecks,
+                        onOpenCounterparties = onOpenCounterparties
+                    )
                 }
-            }
 
-            Text(
-                "برای دیدن متن کامل پیامک و دسته‌بندی، روی هر تراکنش بزنید.",
-                style = MaterialTheme.typography.labelLarge,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
-            )
+                if (unidentifiedSmsCount > 0) {
+                    item { UnidentifiedSmsBanner(count = unidentifiedSmsCount, onClick = onOpenUnidentifiedSms) }
+                }
 
-            if (filtered.isEmpty()) {
-                EmptyState()
-            } else {
-                LazyColumn(
-                    contentPadding = PaddingValues(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
+                item {
+                    OutlinedTextField(
+                        value = query,
+                        onValueChange = { query = it },
+                        modifier = Modifier.fillMaxWidth(),
+                        placeholder = { Text("جستجو در تراکنش‌ها...") },
+                        leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
+                        singleLine = true
+                    )
+                }
+
+                item {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedButton(onClick = onScanInbox, enabled = !isLoading, modifier = Modifier.weight(1f)) {
+                            if (isLoading) {
+                                CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                                Spacer(Modifier.width(8.dp))
+                                Text("در حال اسکن...")
+                            } else {
+                                Icon(Icons.Filled.Refresh, contentDescription = null, modifier = Modifier.size(18.dp))
+                                Spacer(Modifier.width(8.dp))
+                                Text("اسکن پیامک‌ها")
+                            }
+                        }
+                        FilterChip(
+                            selected = onlyUncategorized,
+                            onClick = { onlyUncategorized = !onlyUncategorized },
+                            label = { Text("فقط بدون دسته") }
+                        )
+                    }
+                }
+
+                if (filtered.isEmpty()) {
+                    item { EmptyState() }
+                } else {
                     items(filtered, key = { it.id }) { txn ->
                         TransactionCard(
                             txn = txn,
@@ -104,8 +130,8 @@ fun TransactionListScreen(
                             onClick = { detailFor = txn }
                         )
                     }
-                    item { Spacer(Modifier.height(72.dp)) }
                 }
+                item { Spacer(Modifier.height(72.dp)) }
             }
         }
     }
@@ -115,6 +141,7 @@ fun TransactionListScreen(
             transaction = txn,
             currentCategoryName = categoryById[txn.categoryId]?.name,
             categories = categories,
+            categoryUsageCounts = categoryUsageCounts,
             onDismiss = { detailFor = null },
             onSelectCategory = { categoryId ->
                 onAssignCategory(txn, categoryId)
@@ -135,6 +162,37 @@ fun TransactionListScreen(
                 ruleSuggestionFor = null
             }
         )
+    }
+}
+
+/** Everything TodayDashboardCard needs, computed once by the caller from already-loaded state. */
+data class DashboardData(
+    val todayIncome: Long,
+    val todayExpense: Long,
+    val estimatedProfitThisMonth: Long,
+    val totalOwedToMe: Long,
+    val totalIOwe: Long,
+    val checksDueSoonCount: Int
+)
+
+@Composable
+private fun UnidentifiedSmsBanner(count: Int, onClick: () -> Unit) {
+    ElevatedCard(
+        modifier = Modifier.fillMaxWidth().clickable(onClick = onClick),
+        colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Filled.HelpOutline, contentDescription = null)
+                Spacer(Modifier.width(8.dp))
+                Text("$count پیامک شناسایی‌نشده — بررسی کنید", style = MaterialTheme.typography.bodyMedium)
+            }
+            Icon(Icons.Filled.ChevronRight, contentDescription = null)
+        }
     }
 }
 
@@ -179,17 +237,17 @@ private fun RuleSuggestionDialog(
 
 /**
  * One combined dialog for viewing everything about a transaction (including
- * the full, untruncated SMS text) and assigning its category in the same
- * place -- so when triaging many similar-looking SMS in a row, the user
- * always sees exactly which transaction (amount/bank/date/full text) they're
- * about to categorize before picking, instead of guessing from a truncated
- * two-line snippet.
+ * the full, untruncated SMS text, sender, and account tail) and assigning
+ * its category in the same place -- so when triaging many similar-looking
+ * SMS in a row, the user always sees exactly which transaction they're about
+ * to categorize before picking, instead of guessing from a truncated snippet.
  */
 @Composable
 private fun TransactionDetailDialog(
     transaction: Transaction,
     currentCategoryName: String?,
     categories: List<Category>,
+    categoryUsageCounts: Map<Long, Int>,
     onDismiss: () -> Unit,
     onSelectCategory: (Long?) -> Unit
 ) {
@@ -233,25 +291,26 @@ private fun TransactionDetailDialog(
                     shape = MaterialTheme.shapes.small,
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    Text(
-                        fullText,
-                        style = MaterialTheme.typography.bodyMedium,
-                        modifier = Modifier.padding(12.dp)
-                    )
+                    Text(fullText, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(12.dp))
+                }
+
+                if (transaction.smsSender != null || transaction.accountTail != null) {
+                    Spacer(Modifier.height(8.dp))
+                    transaction.smsSender?.let {
+                        Text("فرستنده: $it", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    transaction.accountTail?.let {
+                        Text("چهار رقم آخر حساب: $it", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
                 }
 
                 Spacer(Modifier.height(16.dp))
                 Text("دسته‌بندی: ${currentCategoryName ?: "بدون دسته"}", style = MaterialTheme.typography.titleMedium)
-                Spacer(Modifier.height(4.dp))
-                Text(
-                    "برای تغییر یا انتخاب دسته، روی یکی از گزینه‌های زیر بزنید:",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
                 Spacer(Modifier.height(8.dp))
 
-                FlowRowCategories(
+                CategoryPicker(
                     categories = categories,
+                    usageCounts = categoryUsageCounts,
                     selectedId = transaction.categoryId,
                     onSelect = onSelectCategory
                 )
@@ -263,37 +322,11 @@ private fun TransactionDetailDialog(
     )
 }
 
-/** Simple wrapping row of category choice chips (no extra library needed for FlowRow). */
-@Composable
-private fun FlowRowCategories(categories: List<Category>, selectedId: Long?, onSelect: (Long?) -> Unit) {
-    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        Row {
-            FilterChip(
-                selected = selectedId == null,
-                onClick = { onSelect(null) },
-                label = { Text("بدون دسته") }
-            )
-        }
-        categories.chunked(2).forEach { row ->
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                row.forEach { cat ->
-                    FilterChip(
-                        selected = selectedId == cat.id,
-                        onClick = { onSelect(cat.id) },
-                        label = { Text(cat.name) }
-                    )
-                }
-            }
-        }
-    }
-}
-
 @Composable
 private fun EmptyState() {
     Column(
-        modifier = Modifier.fillMaxSize().padding(32.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center
+        modifier = Modifier.fillMaxWidth().padding(32.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Icon(
             Icons.Filled.ReceiptLong,
@@ -303,7 +336,7 @@ private fun EmptyState() {
         )
         Spacer(Modifier.height(12.dp))
         Text(
-            "هنوز تراکنشی ثبت نشده است.\nروی «اسکن مجدد پیامک‌های بانکی» بزنید یا یک تراکنش دستی اضافه کنید.",
+            "هنوز تراکنشی ثبت نشده است.\nروی «اسکن پیامک‌ها» بزنید یا یک تراکنش دستی اضافه کنید.",
             textAlign = androidx.compose.ui.text.style.TextAlign.Center,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )

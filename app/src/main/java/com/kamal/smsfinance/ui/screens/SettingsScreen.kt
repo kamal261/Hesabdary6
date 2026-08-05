@@ -1,3 +1,4 @@
+// SmsFinance file version: 2 — added CSV import (categories/counterparties), small-amount auto-categorization settings, and a link to the unidentified-SMS review list
 package com.kamal.smsfinance.ui.screens
 
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -6,12 +7,15 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.selectableGroup
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import com.kamal.smsfinance.data.Category
 import com.kamal.smsfinance.util.ThemeMode
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -28,11 +32,22 @@ fun SettingsScreen(
     onDeleteAll: () -> Unit,
     onManageCategories: () -> Unit,
     onManageRules: () -> Unit,
+    onOpenUnidentifiedSms: () -> Unit,
+    unidentifiedSmsCount: Int,
     driveSignedInEmail: String?,
     onDriveSignIn: () -> Unit,
     onDriveSignOut: () -> Unit,
     onDriveBackup: () -> Unit,
-    onDriveRestore: () -> Unit
+    onDriveRestore: () -> Unit,
+    categories: List<Category>,
+    smallAmountEnabled: Boolean,
+    onSmallAmountEnabledChange: (Boolean) -> Unit,
+    smallAmountThreshold: Long,
+    onSmallAmountThresholdChange: (Long) -> Unit,
+    smallAmountCategoryId: Long?,
+    onSmallAmountCategoryChange: (Long?) -> Unit,
+    onImportCategoriesCsv: (android.net.Uri) -> Unit,
+    onImportCounterpartiesCsv: (android.net.Uri) -> Unit
 ) {
     var webhookField by remember(webhookUrl) { mutableStateOf(webhookUrl) }
     var showDeleteConfirm by remember { mutableStateOf(false) }
@@ -40,6 +55,14 @@ fun SettingsScreen(
     val restoreLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.GetContent()
     ) { uri -> uri?.let(onRestoreBackup) }
+
+    val importCategoriesLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.GetContent()
+    ) { uri -> uri?.let(onImportCategoriesCsv) }
+
+    val importCounterpartiesLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.GetContent()
+    ) { uri -> uri?.let(onImportCounterpartiesCsv) }
 
     Column(
         modifier = Modifier
@@ -64,12 +87,70 @@ fun SettingsScreen(
                 OutlinedButton(onClick = onManageRules, modifier = Modifier.fillMaxWidth()) {
                     Text("مدیریت قوانین هوشمند (دسته‌بندی خودکار)")
                 }
+                OutlinedButton(onClick = onOpenUnidentifiedSms, modifier = Modifier.fillMaxWidth()) {
+                    Text(if (unidentifiedSmsCount > 0) "پیامک‌های شناسایی‌نشده ($unidentifiedSmsCount)" else "پیامک‌های شناسایی‌نشده")
+                }
+            }
+        }
+
+        SettingsSection(title = "دسته‌بندی خودکار مبالغ کوچک") {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("فعال باشد", style = MaterialTheme.typography.bodyMedium)
+                    Switch(checked = smallAmountEnabled, onCheckedChange = onSmallAmountEnabledChange)
+                }
+                if (smallAmountEnabled) {
+                    var thresholdText by remember(smallAmountThreshold) { mutableStateOf(smallAmountThreshold.toString()) }
+                    OutlinedTextField(
+                        value = thresholdText,
+                        onValueChange = { input ->
+                            if (input.all { it.isDigit() }) {
+                                thresholdText = input
+                                input.toLongOrNull()?.let(onSmallAmountThresholdChange)
+                            }
+                        },
+                        label = { Text("سقف مبلغ (تومان)") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    SmallAmountCategoryDropdown(
+                        categories = categories,
+                        selectedId = smallAmountCategoryId,
+                        onSelect = onSmallAmountCategoryChange
+                    )
+                    Text(
+                        "هزینه‌های زیر این مبلغ که پیامک بانکی‌شان دریافت می‌شود، خودکار در دسته انتخابی بالا قرار می‌گیرند (مگر اینکه یک قانون هوشمند قبلاً آن‌ها را دسته‌بندی کرده باشد).",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
             }
         }
 
         SettingsSection(title = "خروجی گرفتن") {
             Button(onClick = onExportCsv, modifier = Modifier.fillMaxWidth()) {
                 Text("خروجی CSV / اکسل")
+            }
+        }
+
+        SettingsSection(title = "وارد کردن از CSV") {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    "فایل باید هر خط را به شکل «نام,نوع» داشته باشد. موارد تکراری (بر اساس نام) نادیده گرفته می‌شوند.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                OutlinedButton(onClick = { importCategoriesLauncher.launch("text/*") }, modifier = Modifier.fillMaxWidth()) {
+                    Text("وارد کردن دسته‌ها از CSV")
+                }
+                OutlinedButton(onClick = { importCounterpartiesLauncher.launch("text/*") }, modifier = Modifier.fillMaxWidth()) {
+                    Text("وارد کردن طرف‌حساب‌ها از CSV")
+                }
             }
         }
 
@@ -165,6 +246,28 @@ fun SettingsScreen(
                 TextButton(onClick = { showDeleteConfirm = false }) { Text("انصراف") }
             }
         )
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun SmallAmountCategoryDropdown(categories: List<Category>, selectedId: Long?, onSelect: (Long?) -> Unit) {
+    var expanded by remember { mutableStateOf(false) }
+    val selectedName = categories.firstOrNull { it.id == selectedId }?.name ?: "انتخاب دسته"
+    ExposedDropdownMenuBox(expanded = expanded, onExpandedChange = { expanded = it }) {
+        OutlinedTextField(
+            value = selectedName,
+            onValueChange = {},
+            readOnly = true,
+            label = { Text("دسته پیش‌فرض برای مبالغ کوچک") },
+            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
+            modifier = Modifier.fillMaxWidth().menuAnchor()
+        )
+        ExposedDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            categories.forEach { cat ->
+                DropdownMenuItem(text = { Text(cat.name) }, onClick = { onSelect(cat.id); expanded = false })
+            }
+        }
     }
 }
 

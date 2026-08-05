@@ -1,7 +1,9 @@
+// SmsFinance file version: 2 — added unidentified-SMS review flow, category usage counts (for the quick-pick UI), counterparty balance summary, today/dashboard helpers, CSV import passthrough, small-amount settings, and a restore-confirmation flow to fix the id-mapping bug on non-empty restores
 package com.kamal.smsfinance.ui
 
 import android.app.Application
 import android.content.Intent
+import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.google.android.gms.auth.api.signin.GoogleSignInAccount
@@ -50,12 +52,35 @@ class TransactionViewModel(application: Application) : AndroidViewModel(applicat
     val allRules: StateFlow<List<SmartRule>> = repository.allRules
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
+    // --- Unidentified SMS (explainable review list) ---
+    val unidentifiedSms: StateFlow<List<UnidentifiedSms>> = repository.unidentifiedSms
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    fun dismissUnidentifiedSms(item: UnidentifiedSms) {
+        viewModelScope.launch { repository.dismissUnidentifiedSms(item.id) }
+    }
+
+    fun dismissAllUnidentifiedSms() {
+        viewModelScope.launch { repository.dismissAllUnidentifiedSms() }
+    }
+
     // --- Settings ---
     val themeMode: StateFlow<ThemeMode> = settings.themeMode
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), ThemeMode.SYSTEM)
 
     val webhookUrl: StateFlow<String> = settings.webhookUrl
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), "")
+
+    val smallAmountEnabled: StateFlow<Boolean> = settings.smallAmountEnabled
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), false)
+    val smallAmountThreshold: StateFlow<Long> = settings.smallAmountThreshold
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 100_000L)
+    val smallAmountCategoryId: StateFlow<Long?> = settings.smallAmountCategoryId
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
+
+    fun setSmallAmountEnabled(enabled: Boolean) { viewModelScope.launch { settings.setSmallAmountEnabled(enabled) } }
+    fun setSmallAmountThreshold(threshold: Long) { viewModelScope.launch { settings.setSmallAmountThreshold(threshold) } }
+    fun setSmallAmountCategoryId(categoryId: Long?) { viewModelScope.launch { settings.setSmallAmountCategoryId(categoryId) } }
 
     // --- UI state ---
     private val _isLoading = MutableStateFlow(false)
@@ -66,6 +91,12 @@ class TransactionViewModel(application: Application) : AndroidViewModel(applicat
 
     private val _lastExportedFile = MutableStateFlow<File?>(null)
     val lastExportedFile: StateFlow<File?> = _lastExportedFile.asStateFlow()
+
+    // Set when a restore is attempted into a non-empty database -- the UI
+    // should show a confirmation dialog and call confirmRestoreReplacingExisting()
+    // or cancelPendingRestore().
+    private val _pendingRestoreUri = MutableStateFlow<Uri?>(null)
+    val pendingRestoreConfirmation: StateFlow<Uri?> = _pendingRestoreUri.asStateFlow()
 
     fun clearMessage() { _message.value = null }
 
@@ -140,8 +171,6 @@ class TransactionViewModel(application: Application) : AndroidViewModel(applicat
     }
 
     // --- Smart rules (Explainable Rule Engine) ---
-    // Rules only affect future SMS imports; creating one does not retroactively
-    // re-scan existing transactions, keeping the write path simple and predictable.
 
     fun addRule(pattern: String, categoryId: Long?, counterpartyId: Long?) {
         viewModelScope.launch {
@@ -164,6 +193,25 @@ class TransactionViewModel(application: Application) : AndroidViewModel(applicat
         viewModelScope.launch { repository.deleteCategory(category) }
     }
 
+    /** Live usage count per category, used to surface the 4 most-used ones -- never stored, always derived. */
+    fun categoryUsageCounts(list: List<Transaction> = allTransactions.value): Map<Long, Int> =
+        list.mapNotNull { it.categoryId }.groupingBy { it }.eachCount()
+
+    fun importCategoriesCsv(uri: Uri) {
+        viewModelScope.launch {
+            _isLoading.value = true
+            try {
+                val db = (getApplication<Application>() as SmsFinanceApp).database
+                val result = CsvImporter.importCategories(getApplication(), uri, db)
+                _message.value = UiMessage("${result.imported} دسته اضافه شد، ${result.skipped} مورد تکراری نادیده گرفته شد")
+            } catch (e: Exception) {
+                _message.value = UiMessage("خطا در وارد کردن CSV: ${e.message}", isError = true)
+            } finally {
+                _isLoading.value = false
+            }
+        }
+    }
+
     // --- Counterparties ---
 
     fun addCounterparty(name: String, type: CounterpartyType, phone: String?, address: String?, description: String?) {
@@ -178,9 +226,40 @@ class TransactionViewModel(application: Application) : AndroidViewModel(applicat
         viewModelScope.launch { repository.deleteCounterparty(counterparty) }
     }
 
+    fun updateCounterpartyNotes(counterparty: Counterparty, notes: String) {
+        viewModelScope.launch { repository.updateCounterparty(counterparty.copy(notes = notes.ifBlank { null })) }
+    }
+
     fun transactionsForCounterparty(id: Long) = repository.transactionsForCounterparty(id)
     fun balanceForCounterparty(id: Long) = repository.balanceForCounterparty(id)
     fun totalVolumeForCounterparty(id: Long) = repository.totalVolumeForCounterparty(id)
+
+    fun importCounterpartiesCsv(uri: Uri) {
+        viewModelScope.launch {
+            _isLoading.value = true
+            try {
+                val db = (getApplication<Application>() as SmsFinanceApp).database
+                val result = CsvImporter.importCounterparties(getApplication(), uri, db)
+                _message.value = UiMessage("${result.imported} طرف‌حساب اضافه شد، ${result.skipped} مورد تکراری نادیده گرفته شد")
+            } catch (e: Exception) {
+                _message.value = UiMessage("خطا در وارد کردن CSV: ${e.message}", isError = true)
+            } finally {
+                _isLoading.value = false
+            }
+        }
+    }
+
+    /** Owed-to-me total and I-owe total, summed across every counterparty -- derived live, never stored. */
+    fun counterpartyBalanceSummary(list: List<Transaction> = allTransactions.value): Pair<Long, Long> {
+        val byCounterparty = list.filter { it.counterpartyId != null }.groupBy { it.counterpartyId!! }
+        var owedToMe = 0L
+        var iOwe = 0L
+        byCounterparty.values.forEach { txns ->
+            val balance = txns.sumOf { if (it.type == TransactionType.INCOME) it.amountToman else -it.amountToman }
+            if (balance > 0) owedToMe += balance else iOwe += -balance
+        }
+        return owedToMe to iOwe
+    }
 
     // --- Checks ---
 
@@ -266,18 +345,43 @@ class TransactionViewModel(application: Application) : AndroidViewModel(applicat
         }
     }
 
-    fun restoreLocalBackup(uri: android.net.Uri) {
+    /** Entry point from the UI file picker. Routes through a confirmation step if the database isn't empty. */
+    fun restoreLocalBackup(uri: Uri) {
+        viewModelScope.launch { initiateRestore(uri) }
+    }
+
+    fun confirmRestoreReplacingExisting() {
+        val uri = _pendingRestoreUri.value ?: return
+        _pendingRestoreUri.value = null
         viewModelScope.launch {
-            _isLoading.value = true
-            try {
-                val db = (getApplication<Application>() as SmsFinanceApp).database
-                val count = BackupManager.restoreBackup(getApplication(), uri, db)
-                _message.value = UiMessage("$count تراکنش بازیابی شد")
-            } catch (e: Exception) {
-                _message.value = UiMessage("خطا در بازیابی: ${e.message}", isError = true)
-            } finally {
-                _isLoading.value = false
-            }
+            val db = (getApplication<Application>() as SmsFinanceApp).database
+            BackupManager.wipeForRestore(db)
+            performRestore(uri, db)
+        }
+    }
+
+    fun cancelPendingRestore() {
+        _pendingRestoreUri.value = null
+    }
+
+    private suspend fun initiateRestore(uri: Uri) {
+        val db = (getApplication<Application>() as SmsFinanceApp).database
+        if (BackupManager.hasExistingData(db)) {
+            _pendingRestoreUri.value = uri
+        } else {
+            performRestore(uri, db)
+        }
+    }
+
+    private suspend fun performRestore(uri: Uri, db: AppDatabase) {
+        _isLoading.value = true
+        try {
+            val count = BackupManager.restoreBackup(getApplication(), uri, db)
+            _message.value = UiMessage("$count تراکنش بازیابی شد")
+        } catch (e: Exception) {
+            _message.value = UiMessage("خطا در بازیابی: ${e.message}", isError = true)
+        } finally {
+            _isLoading.value = false
         }
     }
 
@@ -350,10 +454,8 @@ class TransactionViewModel(application: Application) : AndroidViewModel(applicat
                 val tempFile = File(app.cacheDir, "drive_restore_temp.json")
                 when (val result = GoogleDriveUploader.downloadLatestBackup(token, tempFile)) {
                     is GoogleDriveUploader.DriveResult.Success -> {
-                        val db = (app as SmsFinanceApp).database
-                        val uri = android.net.Uri.fromFile(tempFile)
-                        val count = BackupManager.restoreBackup(app, uri, db)
-                        _message.value = UiMessage("$count تراکنش از Drive بازیابی شد")
+                        _isLoading.value = false
+                        initiateRestore(android.net.Uri.fromFile(tempFile))
                     }
                     is GoogleDriveUploader.DriveResult.Failure -> _message.value = UiMessage(result.message, isError = true)
                 }
@@ -371,12 +473,6 @@ class TransactionViewModel(application: Application) : AndroidViewModel(applicat
     fun totalExpense(list: List<Transaction> = allTransactions.value) =
         list.filter { it.type == TransactionType.EXPENSE }.sumOf { it.amountToman }
 
-    // "سود تقریبی" must exclude debt settlements: collecting a receivable or
-    // paying a payable moves cash but isn't profit/loss -- it settles a debt
-    // that (by definition) was already someone else's money. Mixing these
-    // into totalIncome/totalExpense would silently inflate or deflate the
-    // profit estimate the dashboard promises. totalIncome/totalExpense stay
-    // as raw cash-flow (still correct for "how much moved today").
     private fun categoryKindOf(transaction: Transaction, categories: List<Category>): CategoryKind? =
         categories.firstOrNull { it.id == transaction.categoryId }?.kind
 
@@ -404,6 +500,16 @@ class TransactionViewModel(application: Application) : AndroidViewModel(applicat
         val startOfMonth = cal.timeInMillis
         return list.filter { it.date >= startOfMonth }
     }
+
+    fun todayTransactions(list: List<Transaction> = allTransactions.value): List<Transaction> {
+        val cal = Calendar.getInstance()
+        cal.set(Calendar.HOUR_OF_DAY, 0); cal.set(Calendar.MINUTE, 0); cal.set(Calendar.SECOND, 0); cal.set(Calendar.MILLISECOND, 0)
+        val startOfDay = cal.timeInMillis
+        return list.filter { it.date >= startOfDay }
+    }
+
+    fun todayIncome(list: List<Transaction> = allTransactions.value) = totalIncome(todayTransactions(list))
+    fun todayExpense(list: List<Transaction> = allTransactions.value) = totalExpense(todayTransactions(list))
 
     fun byBank(list: List<Transaction> = allTransactions.value): Map<String, Long> =
         list.groupBy { it.bankName }.mapValues { (_, txns) -> txns.sumOf { it.amountToman } }

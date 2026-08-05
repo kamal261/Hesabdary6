@@ -1,3 +1,4 @@
+// SmsFinance file version: 1 — default dynamicColor to false so the app's own designed palette (softer expense color, richer income green) is what users actually see, instead of it being silently overridden by wallpaper-based Material You colors on Android 12+
 package com.kamal.smsfinance.ui.theme
 
 import android.app.Activity
@@ -19,6 +20,8 @@ private val LightColors = lightColorScheme(
     primary = PrimaryLight,
     background = BackgroundLight,
     surface = SurfaceLight,
+    surfaceVariant = androidx.compose.ui.graphics.Color(0xFFEDEEF3),
+    secondaryContainer = DashboardAccentContainer,
     error = RedExpense
 )
 
@@ -32,7 +35,7 @@ private val DarkColors = darkColorScheme(
 @Composable
 fun SmsFinanceTheme(
     darkTheme: Boolean = isSystemInDarkTheme(),
-    dynamicColor: Boolean = true,
+    dynamicColor: Boolean = false,
     content: @Composable () -> Unit
 ) {
     val colorScheme = when {

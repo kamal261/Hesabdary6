@@ -29,4 +29,7 @@ interface CategoryDao {
 
     @Query("SELECT COUNT(*) FROM categories")
     suspend fun count(): Int
+
+    @Query("SELECT COUNT(*) FROM categories WHERE name = :name COLLATE NOCASE")
+    suspend fun countByName(name: String): Int
 }

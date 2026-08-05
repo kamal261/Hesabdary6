@@ -19,6 +19,7 @@ class SmsFinanceApp : Application() {
             counterpartyDao = database.counterpartyDao(),
             checkDao = database.checkDao(),
             smartRuleDao = database.smartRuleDao(),
+            unidentifiedSmsDao = database.unidentifiedSmsDao(),
             context = this
         )
     }

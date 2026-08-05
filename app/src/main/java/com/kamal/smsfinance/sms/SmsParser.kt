@@ -1,3 +1,4 @@
+// SmsFinance file version: 2 — parse() now returns a sealed SmsParseResult (Recognized/Unidentified/Ignored) instead of a nullable ParsedSms, so bank-like messages that fail to parse are surfaced for review instead of silently dropped
 package com.kamal.smsfinance.sms
 
 import com.kamal.smsfinance.data.TransactionType
@@ -13,6 +14,21 @@ data class ParsedSms(
     val rawSms: String,
     val accountTail: String?
 )
+
+/**
+ * Outcome of trying to parse one SMS.
+ * - Recognized: a full transaction was extracted.
+ * - Unidentified: the message looked bank-related (known bank sender, or a
+ *   type keyword matched) but a full transaction couldn't be extracted --
+ *   kept for the user to review rather than silently dropped.
+ * - Ignored: confidently not a transaction (blank, OTP/promo/balance-check,
+ *   or ordinary non-bank text) -- never stored, never shown.
+ */
+sealed class SmsParseResult {
+    data class Recognized(val parsed: ParsedSms) : SmsParseResult()
+    data class Unidentified(val sender: String, val body: String, val timestamp: Long) : SmsParseResult()
+    object Ignored : SmsParseResult()
+}
 
 /**
  * Parses Iranian bank SMS messages into structured transaction data.
@@ -31,9 +47,17 @@ data class ParsedSms(
  *   unlabeled amount defaults to Rial (divided by 10), not Toman.
  * - Type (expense/income) is inferred from a keyword table first; if no
  *   keyword matches (same terse-SMS case), a leading "-"/"+" immediately
- *   before the amount is used as a fallback signal.
+ *   before the amount is used as a fallback signal -- but only when the
+ *   message also reports an account balance ("مانده:"/"موجودی:"), which
+ *   real bank ledger SMS almost always include and promotional/spam SMS
+ *   almost never do. This anchor prevents phone numbers, discount codes,
+ *   and price ranges (which also contain +/- next to digits) from being
+ *   misread as transactions.
  * - Ambiguous or promotional messages ("تخفیف", "تبلیغ") are rejected
  *   outright so they never get filed as false transactions.
+ * - A message that has *some* bank-like signal (known sender, or a type
+ *   keyword) but still can't be fully parsed is returned as Unidentified
+ *   instead of being dropped -- see SmsParseResult.
  */
 object SmsParser {
 
@@ -90,41 +114,55 @@ object SmsParser {
 
     // Final fallback for terse, keyword-less, unit-less ledger lines (e.g.
     // Resalat Bank: "-2,260,000"). A leading sign right before the digits is
-    // both the amount marker and the type signal for these messages.
+    // both the amount marker and the type signal for these messages -- but
+    // ONLY trusted when the message also reports an account balance
+    // ("مانده:"/"موجودی:" + a number), which is a strong, near-universal
+    // signature of genuine core-banking ledger SMS. Promotional text, phone
+    // numbers, discount codes, and price ranges also contain +/- next to
+    // digits but essentially never report a balance line -- this anchor is
+    // what keeps the fallback from misfiring on non-bank SMS.
     private val SIGNED_AMOUNT_REGEX = Regex("""([+\-])\s*([\d۰-۹][\d۰-۹,٬]*)""")
+    private val BALANCE_LINE_REGEX = Regex("""(مانده|موجودی)[:\s]*[\d۰-۹][\d۰-۹,٬]*""")
 
     // Card/account tail, e.g. "...1234" or "حساب ****1234"
     private val TAIL_REGEX = Regex("""[*x]{2,}(\d{4})""")
 
-    fun parse(sender: String, body: String, timestamp: Long): ParsedSms? {
-        if (body.isBlank()) return null
-        if (IGNORE_KEYWORDS.any { body.contains(it) }) return null
+    fun parse(sender: String, body: String, timestamp: Long): SmsParseResult {
+        if (body.isBlank()) return SmsParseResult.Ignored
+        if (IGNORE_KEYWORDS.any { body.contains(it) }) return SmsParseResult.Ignored
 
-        val type = identifyType(body) ?: return null
-        val amount = extractAmountToman(body) ?: return null
-        if (amount <= 0) return null
+        val type = identifyType(body)
+        val amount = if (type != null) extractAmountToman(body) else null
 
-        // Bank identification runs last and is allowed to fall back to
-        // "نامشخص" -- by this point type+amount already confirmed this looks
-        // like a real transaction, so an unrecognized sender is still worth
-        // recording (better a labeled "unknown bank" than a silently dropped
-        // real transaction).
-        val bank = identifyBank(sender, body) ?: "نامشخص"
+        if (type != null && amount != null && amount > 0) {
+            val bank = identifyBank(sender, body) ?: "نامشخص"
+            val tail = TAIL_REGEX.find(body)?.groupValues?.get(1)
+            val description = buildDescription(body, type)
+            return SmsParseResult.Recognized(
+                ParsedSms(
+                    sender = sender,
+                    amountToman = amount,
+                    type = type,
+                    bankName = bank,
+                    description = description,
+                    timestamp = timestamp,
+                    rawSms = body,
+                    accountTail = tail
+                )
+            )
+        }
 
-        val tail = TAIL_REGEX.find(body)?.groupValues?.get(1)
-        val description = buildDescription(body, type)
-
-        return ParsedSms(
-            sender = sender,
-            amountToman = amount,
-            type = type,
-            bankName = bank,
-            description = description,
-            timestamp = timestamp,
-            rawSms = body,
-            accountTail = tail
-        )
+        // Couldn't fully parse. Only worth flagging for review if there was
+        // *some* bank-like signal -- a type keyword matched (amount just
+        // failed to extract), or the sender is a known bank short-code.
+        // Otherwise this is ordinary non-bank text and is safely ignored,
+        // so the review list doesn't fill up with unrelated personal SMS.
+        val looksBankRelated = type != null || isKnownBankSender(sender)
+        return if (looksBankRelated) SmsParseResult.Unidentified(sender, body, timestamp) else SmsParseResult.Ignored
     }
+
+    private fun isKnownBankSender(sender: String): Boolean =
+        BANK_SENDERS.values.any { identifiers -> identifiers.any { sender.contains(it, ignoreCase = true) } }
 
     private fun identifyBank(sender: String, body: String): String? {
         for ((bankName, identifiers) in BANK_SENDERS) {
@@ -152,8 +190,12 @@ object SmsParser {
                 if (expenseIdx <= incomeIdx) TransactionType.EXPENSE else TransactionType.INCOME
             }
             // No keyword at all -- terse ledger-style SMS (e.g. Resalat Bank).
-            // A leading "-" means money left the account, "+" means it arrived.
+            // Only trusted when a balance line is also present (see
+            // BALANCE_LINE_REGEX doc-comment); otherwise this is almost
+            // certainly not a bank transaction at all, so it's rejected
+            // rather than guessed at.
             else -> {
+                if (!BALANCE_LINE_REGEX.containsMatchIn(body)) return null
                 val signed = SIGNED_AMOUNT_REGEX.find(body) ?: return null
                 if (signed.groupValues[1] == "-") TransactionType.EXPENSE else TransactionType.INCOME
             }
@@ -176,12 +218,14 @@ object SmsParser {
             return normalizeNumber(bareMatch.groupValues[1])
         }
         // Unit-less ledger line (e.g. "-2,260,000" with no تومان/ریال word at
-        // all). Iranian core-banking ledgers are denominated in Rial, so an
-        // unlabeled amount is treated as Rial and converted to Toman.
-        val signedMatch = SIGNED_AMOUNT_REGEX.find(body)
-        if (signedMatch != null) {
-            val number = normalizeNumber(signedMatch.groupValues[2]) ?: return null
-            return number / 10
+        // all). Same anchor requirement as identifyType's fallback: only
+        // trusted alongside a balance line, otherwise rejected.
+        if (BALANCE_LINE_REGEX.containsMatchIn(body)) {
+            val signedMatch = SIGNED_AMOUNT_REGEX.find(body)
+            if (signedMatch != null) {
+                val number = normalizeNumber(signedMatch.groupValues[2]) ?: return null
+                return number / 10
+            }
         }
         return null
     }

@@ -1,3 +1,4 @@
+// SmsFinance file version: 2 — added UnidentifiedSms entity/DAO, bumped to schema v5 (new table + Counterparty.notes column)
 package com.kamal.smsfinance.data
 
 import android.content.Context
@@ -44,8 +45,8 @@ class Converters {
 }
 
 @Database(
-    entities = [Transaction::class, Category::class, Counterparty::class, Check::class, SmartRule::class],
-    version = 4,
+    entities = [Transaction::class, Category::class, Counterparty::class, Check::class, SmartRule::class, UnidentifiedSms::class],
+    version = 5,
     exportSchema = true
 )
 @TypeConverters(Converters::class)
@@ -56,6 +57,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun counterpartyDao(): CounterpartyDao
     abstract fun checkDao(): CheckDao
     abstract fun smartRuleDao(): SmartRuleDao
+    abstract fun unidentifiedSmsDao(): UnidentifiedSmsDao
 
     companion object {
         @Volatile

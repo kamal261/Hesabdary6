@@ -1,10 +1,14 @@
+// SmsFinance file version: 2 — handles SmsParser's new sealed SmsParseResult (stores Unidentified messages for review instead of dropping them), added small-amount auto-categorization for SMS-imported expenses
 package com.kamal.smsfinance.data
 
 import android.content.Context
 import com.kamal.smsfinance.sms.ParsedSms
 import com.kamal.smsfinance.sms.SmsParser
+import com.kamal.smsfinance.sms.SmsParseResult
 import com.kamal.smsfinance.sms.SmsReaderUtil
+import com.kamal.smsfinance.util.SettingsStore
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.first
 import java.util.concurrent.TimeUnit
 
 class TransactionRepository(
@@ -13,9 +17,11 @@ class TransactionRepository(
     private val counterpartyDao: CounterpartyDao,
     private val checkDao: CheckDao,
     private val smartRuleDao: SmartRuleDao,
+    private val unidentifiedSmsDao: UnidentifiedSmsDao,
     private val context: Context
 ) {
     private val ruleEngine = RuleEngine()
+    private val settings = SettingsStore(context)
 
     // --- Transactions ---
 
@@ -81,20 +87,33 @@ class TransactionRepository(
         val messages = SmsReaderUtil.readInbox(context)
         var added = 0
         for (msg in messages) {
-            val parsed = SmsParser.parse(msg.sender, msg.body, msg.timestamp) ?: continue
-            if (tryInsert(parsed)) added++
+            if (handleParseResult(SmsParser.parse(msg.sender, msg.body, msg.timestamp))) added++
         }
         return added
     }
 
     /** Called from SmsReceiver when a new SMS arrives in real time. Silent -- no notification. */
-    suspend fun importSingleSms(sender: String, body: String, timestamp: Long): Transaction? {
-        val parsed = SmsParser.parse(sender, body, timestamp) ?: return null
-        val inserted = tryInsert(parsed)
-        return if (inserted) parsed.toTransaction() else null
+    suspend fun importSingleSms(sender: String, body: String, timestamp: Long) {
+        handleParseResult(SmsParser.parse(sender, body, timestamp))
     }
 
-    private suspend fun tryInsert(parsed: ParsedSms): Boolean {
+    /** Routes a parse outcome to the right table. Returns true if a new transaction was stored. */
+    private suspend fun handleParseResult(result: SmsParseResult): Boolean = when (result) {
+        is SmsParseResult.Recognized -> tryInsertTransaction(result.parsed)
+        is SmsParseResult.Unidentified -> {
+            tryInsertUnidentified(result.sender, result.body, result.timestamp)
+            false
+        }
+        SmsParseResult.Ignored -> false
+    }
+
+    private suspend fun tryInsertUnidentified(sender: String, body: String, timestamp: Long) {
+        val exists = unidentifiedSmsDao.existsExact(sender, body, timestamp) > 0
+        if (exists) return
+        unidentifiedSmsDao.insert(UnidentifiedSms(sender = sender, body = body, timestamp = timestamp))
+    }
+
+    private suspend fun tryInsertTransaction(parsed: ParsedSms): Boolean {
         val exists = transactionDao.existsExact(parsed.sender, parsed.rawSms, parsed.timestamp) > 0
         if (exists) return false
 
@@ -113,12 +132,27 @@ class TransactionRepository(
             if (similar) return false
         }
 
-        val match = ruleEngine.evaluate(parsed.rawSms, smartRuleDao.getAllRulesOnce())
-        transactionDao.insert(parsed.toTransaction(match))
+        val ruleMatch = ruleEngine.evaluate(parsed.rawSms, smartRuleDao.getAllRulesOnce())
+        var categoryId = ruleMatch.categoryId
+
+        // Small-amount auto-categorization: only applies when no rule already
+        // claimed this transaction, and only to expenses (per product scope).
+        if (categoryId == null && parsed.type == TransactionType.EXPENSE) {
+            categoryId = smallAmountCategoryIdIfApplicable(parsed.amountToman)
+        }
+
+        transactionDao.insert(parsed.toTransaction(categoryId, ruleMatch.counterpartyId))
         return true
     }
 
-    private fun ParsedSms.toTransaction(match: RuleMatchResult = RuleMatchResult()) = Transaction(
+    private suspend fun smallAmountCategoryIdIfApplicable(amountToman: Long): Long? {
+        if (!settings.smallAmountEnabled.first()) return null
+        val threshold = settings.smallAmountThreshold.first()
+        if (amountToman >= threshold) return null
+        return settings.smallAmountCategoryId.first()
+    }
+
+    private fun ParsedSms.toTransaction(categoryId: Long?, counterpartyId: Long?) = Transaction(
         amountToman = amountToman,
         type = type,
         bankName = bankName,
@@ -128,9 +162,15 @@ class TransactionRepository(
         rawSms = rawSms,
         smsSender = sender,
         accountTail = accountTail,
-        categoryId = match.categoryId,
-        counterpartyId = match.counterpartyId
+        categoryId = categoryId,
+        counterpartyId = counterpartyId
     )
+
+    // --- Unidentified SMS (explainable alternative to auto-guessing) ---
+
+    val unidentifiedSms: Flow<List<UnidentifiedSms>> = unidentifiedSmsDao.getActive()
+    suspend fun dismissUnidentifiedSms(id: Long) = unidentifiedSmsDao.dismiss(id)
+    suspend fun dismissAllUnidentifiedSms() = unidentifiedSmsDao.dismissAll()
 
     // --- Smart rules (Explainable Rule Engine) ---
 

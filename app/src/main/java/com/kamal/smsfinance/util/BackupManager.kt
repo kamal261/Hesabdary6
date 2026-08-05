@@ -1,3 +1,4 @@
+// SmsFinance file version: 2 — restore now dedupes categories/counterparties by name instead of blindly inserting (was creating duplicate rows on every restore), added hasExistingData()/wipeForRestore() for the restore-confirmation flow, added Counterparty.notes
 package com.kamal.smsfinance.util
 
 import android.content.Context
@@ -20,11 +21,20 @@ import java.io.File
  * "version" here is a BACKUP-FORMAT version, intentionally decoupled from
  * Room's schema version (which changes independently as columns are added).
  * Forward/backward compatibility is handled by keeping every field read
- * with root.has(...) / opt*() -- an older backup missing a newer table (e.g.
- * "smartRules") simply restores nothing for it instead of failing, and a
- * newer backup opened by older code just ignores fields it doesn't expect.
- * This tolerant-parsing approach is deliberately simpler than a strict
- * migration ladder, which isn't justified yet for a single-device local file.
+ * with root.has(...) / opt*() -- an older backup missing a newer table
+ * simply restores nothing for it instead of failing, and a newer backup
+ * opened by older code just ignores fields it doesn't expect. This
+ * tolerant-parsing approach is deliberately simpler than a strict migration
+ * ladder, which isn't justified yet for a single-device local file.
+ *
+ * Restore safety: categories and counterparties are deduped by name
+ * (case-insensitive) so restoring never creates duplicate rows -- including
+ * duplicates of the seeded default categories. Transactions/checks/rules
+ * reference categoryId/counterpartyId by their *original* auto-generated
+ * id, which can only line up correctly if the database was empty before
+ * restoring; see hasExistingData()/wipeForRestore(), used by the ViewModel
+ * to warn the user and offer a clean slate before restoring into a
+ * non-empty database.
  */
 object BackupManager {
 
@@ -32,6 +42,18 @@ object BackupManager {
 
     private fun String?.orNull(): Any = this ?: JSONObject.NULL
     private fun Long?.orNull(): Any = this ?: JSONObject.NULL
+
+    suspend fun hasExistingData(db: AppDatabase): Boolean = withContext(Dispatchers.IO) {
+        db.transactionDao().getAllOnce().isNotEmpty()
+    }
+
+    /** Wipes everything a restore would repopulate, EXCEPT categories (deduped by name instead, so user-added custom categories aren't lost). */
+    suspend fun wipeForRestore(db: AppDatabase) = withContext(Dispatchers.IO) {
+        db.transactionDao().deleteAll()
+        db.counterpartyDao().getAllOnce().forEach { db.counterpartyDao().delete(it) }
+        db.checkDao().getAllOnce().forEach { db.checkDao().delete(it) }
+        db.smartRuleDao().getAllRulesOnce().forEach { db.smartRuleDao().deleteRule(it) }
+    }
 
     suspend fun createBackup(context: Context, db: AppDatabase): File = withContext(Dispatchers.IO) {
         val root = JSONObject()
@@ -75,6 +97,7 @@ object BackupManager {
                     put("phone", cp.phone.orNull())
                     put("address", cp.address.orNull())
                     put("description", cp.description.orNull())
+                    put("notes", cp.notes.orNull())
                     put("createdAt", cp.createdAt)
                 })
             }
@@ -117,12 +140,9 @@ object BackupManager {
     }
 
     /**
-     * Restores from a backup file. Note: because Transaction/Check rows
-     * reference categoryId/counterpartyId/settledTransactionId by their
-     * *original* auto-generated ids, restoring into a database that already
-     * has other data can misassign those links if ids were reused. For a
-     * clean restore, do it right after "حذف تمام تراکنش‌ها" on an otherwise
-     * empty database.
+     * Restores from a backup file. Call hasExistingData()+wipeForRestore()
+     * from the caller first (with user confirmation) for a clean restore
+     * into a non-empty database -- see the class doc-comment.
      */
     suspend fun restoreBackup(context: Context, uri: Uri, db: AppDatabase): Int =
         withContext(Dispatchers.IO) {
@@ -133,28 +153,34 @@ object BackupManager {
 
             if (root.has("categories")) {
                 val arr = root.getJSONArray("categories")
-                val list = (0 until arr.length()).map { i ->
+                for (i in 0 until arr.length()) {
                     val o = arr.getJSONObject(i)
-                    Category(
-                        name = o.getString("name"),
-                        kind = CategoryKind.valueOf(o.getString("kind")),
-                        isDefault = o.optBoolean("isDefault", false)
+                    val name = o.getString("name")
+                    if (db.categoryDao().countByName(name) > 0) continue // dedup: skip existing (incl. defaults)
+                    db.categoryDao().insert(
+                        Category(
+                            name = name,
+                            kind = CategoryKind.valueOf(o.getString("kind")),
+                            isDefault = o.optBoolean("isDefault", false)
+                        )
                     )
                 }
-                db.categoryDao().insertAll(list)
             }
 
             if (root.has("counterparties")) {
                 val arr = root.getJSONArray("counterparties")
                 for (i in 0 until arr.length()) {
                     val o = arr.getJSONObject(i)
+                    val name = o.getString("name")
+                    if (db.counterpartyDao().countByName(name) > 0) continue // dedup: skip existing
                     db.counterpartyDao().insert(
                         Counterparty(
-                            name = o.getString("name"),
+                            name = name,
                             type = CounterpartyType.valueOf(o.getString("type")),
                             phone = o.optStringOrNull("phone"),
                             address = o.optStringOrNull("address"),
                             description = o.optStringOrNull("description"),
+                            notes = o.optStringOrNull("notes"),
                             createdAt = o.optLong("createdAt", System.currentTimeMillis())
                         )
                     )

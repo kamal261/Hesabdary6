@@ -1,3 +1,4 @@
+// SmsFinance file version: 2 — added UnidentifiedSms overlay, dashboard data wiring, restore-confirmation dialog, small-amount settings + CSV import passthrough, counterparty notes wiring
 package com.kamal.smsfinance
 
 import android.content.Intent
@@ -15,7 +16,6 @@ import androidx.compose.material.icons.filled.Receipt
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
-import androidx.compose.foundation.layout.padding
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import com.kamal.smsfinance.permission.SmsPermissionGate
@@ -33,6 +33,7 @@ private sealed class Overlay {
     object AddManual : Overlay()
     object Categories : Overlay()
     object Rules : Overlay()
+    object UnidentifiedSms : Overlay()
     data class CounterpartyProfile(val id: Long) : Overlay()
 }
 
@@ -70,11 +71,16 @@ private fun AppRoot(viewModel: TransactionViewModel) {
     val checks by viewModel.allChecks.collectAsState()
     val checksDueSoon by viewModel.checksDueSoon.collectAsState()
     val rules by viewModel.allRules.collectAsState()
+    val unidentifiedSms by viewModel.unidentifiedSms.collectAsState()
     val isLoading by viewModel.isLoading.collectAsState()
     val message by viewModel.message.collectAsState()
     val themeMode by viewModel.themeMode.collectAsState()
     val webhookUrl by viewModel.webhookUrl.collectAsState()
     val lastExportedFile by viewModel.lastExportedFile.collectAsState()
+    val pendingRestoreUri by viewModel.pendingRestoreConfirmation.collectAsState()
+    val smallAmountEnabled by viewModel.smallAmountEnabled.collectAsState()
+    val smallAmountThreshold by viewModel.smallAmountThreshold.collectAsState()
+    val smallAmountCategoryId by viewModel.smallAmountCategoryId.collectAsState()
 
     var tab by remember { mutableStateOf(Tab.LIST) }
     var overlay by remember { mutableStateOf<Overlay?>(null) }
@@ -104,10 +110,33 @@ private fun AppRoot(viewModel: TransactionViewModel) {
         }
     }
 
+    // Restore-into-non-empty-database confirmation (fixes the id-mapping bug).
+    if (pendingRestoreUri != null) {
+        AlertDialog(
+            onDismissRequest = { viewModel.cancelPendingRestore() },
+            title = { Text("جایگزینی داده‌های فعلی؟") },
+            text = {
+                Text(
+                    "دیتابیس فعلی خالی نیست. برای بازیابی صحیح، پیشنهاد می‌شود ابتدا تراکنش‌ها، طرف‌حساب‌ها، " +
+                        "چک‌ها و قوانین فعلی حذف و با نسخه پشتیبان جایگزین شوند (دسته‌بندی‌های شما حفظ می‌مانند)."
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = { viewModel.confirmRestoreReplacingExisting() }) {
+                    Text("حذف و بازیابی", color = MaterialTheme.colorScheme.error)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { viewModel.cancelPendingRestore() }) { Text("انصراف") }
+            }
+        )
+    }
+
     when (val current = overlay) {
         Overlay.AddManual -> {
             AddTransactionScreen(
                 categories = categories,
+                categoryUsageCounts = viewModel.categoryUsageCounts(transactions),
                 counterparties = counterparties,
                 onSave = { amount, type, bank, desc, date, categoryId, counterpartyId ->
                     viewModel.addManualTransaction(amount, type, bank, desc, date, categoryId, counterpartyId)
@@ -141,6 +170,15 @@ private fun AppRoot(viewModel: TransactionViewModel) {
             )
             return
         }
+        Overlay.UnidentifiedSms -> {
+            UnidentifiedSmsScreen(
+                items = unidentifiedSms,
+                onDismiss = { viewModel.dismissUnidentifiedSms(it) },
+                onDismissAll = { viewModel.dismissAllUnidentifiedSms() },
+                onBack = { overlay = null }
+            )
+            return
+        }
         is Overlay.CounterpartyProfile -> {
             val counterparty = counterparties.firstOrNull { it.id == current.id }
             if (counterparty == null) {
@@ -158,7 +196,8 @@ private fun AppRoot(viewModel: TransactionViewModel) {
                     onDelete = {
                         viewModel.deleteCounterparty(counterparty)
                         overlay = null
-                    }
+                    },
+                    onSaveNotes = { notes -> viewModel.updateCounterpartyNotes(counterparty, notes) }
                 )
             }
             return
@@ -197,20 +236,36 @@ private fun AppRoot(viewModel: TransactionViewModel) {
                 )
             }
         }
-    ) { scaffoldPadding ->
-        androidx.compose.foundation.layout.Box(modifier = Modifier.padding(scaffoldPadding)) {
+    ) { padding ->
+        androidx.compose.foundation.layout.Box(modifier = Modifier.padding(padding)) {
             when (tab) {
-                Tab.LIST -> TransactionListScreen(
-                    transactions = transactions,
-                    categories = categories,
-                    recurringIds = viewModel.recurringIds(transactions),
-                    isLoading = isLoading,
-                    onScanInbox = { viewModel.scanInbox() },
-                    onDelete = { viewModel.deleteTransaction(it) },
-                    onAddManual = { overlay = Overlay.AddManual },
-                    onAssignCategory = { txn, catId -> viewModel.assignCategory(txn.id, catId) },
-                    onCreateRule = { pattern, categoryId -> viewModel.addRule(pattern, categoryId, null) }
-                )
+                Tab.LIST -> {
+                    val (owedToMe, iOwe) = viewModel.counterpartyBalanceSummary(transactions)
+                    TransactionListScreen(
+                        transactions = transactions,
+                        categories = categories,
+                        categoryUsageCounts = viewModel.categoryUsageCounts(transactions),
+                        recurringIds = viewModel.recurringIds(transactions),
+                        isLoading = isLoading,
+                        unidentifiedSmsCount = unidentifiedSms.size,
+                        dashboard = DashboardData(
+                            todayIncome = viewModel.todayIncome(transactions),
+                            todayExpense = viewModel.todayExpense(transactions),
+                            estimatedProfitThisMonth = viewModel.estimatedProfit(viewModel.thisMonthTransactions(transactions), categories),
+                            totalOwedToMe = owedToMe,
+                            totalIOwe = iOwe,
+                            checksDueSoonCount = checksDueSoon.size
+                        ),
+                        onScanInbox = { viewModel.scanInbox() },
+                        onDelete = { viewModel.deleteTransaction(it) },
+                        onAddManual = { overlay = Overlay.AddManual },
+                        onAssignCategory = { txn, catId -> viewModel.assignCategory(txn.id, catId) },
+                        onCreateRule = { pattern, categoryId -> viewModel.addRule(pattern, categoryId, null) },
+                        onOpenUnidentifiedSms = { overlay = Overlay.UnidentifiedSms },
+                        onOpenChecks = { tab = Tab.CHECKS },
+                        onOpenCounterparties = { tab = Tab.COUNTERPARTIES }
+                    )
+                }
                 Tab.COUNTERPARTIES -> CounterpartiesScreen(
                     counterparties = counterparties,
                     balanceOf = { id ->
@@ -256,6 +311,8 @@ private fun AppRoot(viewModel: TransactionViewModel) {
                     onDeleteAll = { viewModel.deleteAllTransactions() },
                     onManageCategories = { overlay = Overlay.Categories },
                     onManageRules = { overlay = Overlay.Rules },
+                    onOpenUnidentifiedSms = { overlay = Overlay.UnidentifiedSms },
+                    unidentifiedSmsCount = unidentifiedSms.size,
                     driveSignedInEmail = driveAccountEmail,
                     onDriveSignIn = { driveSignInLauncher.launch(viewModel.driveSignInIntent()) },
                     onDriveSignOut = {
@@ -263,7 +320,16 @@ private fun AppRoot(viewModel: TransactionViewModel) {
                         driveAccountEmail = null
                     },
                     onDriveBackup = { viewModel.backupToDrive() },
-                    onDriveRestore = { viewModel.restoreFromDrive() }
+                    onDriveRestore = { viewModel.restoreFromDrive() },
+                    categories = categories,
+                    smallAmountEnabled = smallAmountEnabled,
+                    onSmallAmountEnabledChange = { viewModel.setSmallAmountEnabled(it) },
+                    smallAmountThreshold = smallAmountThreshold,
+                    onSmallAmountThresholdChange = { viewModel.setSmallAmountThreshold(it) },
+                    smallAmountCategoryId = smallAmountCategoryId,
+                    onSmallAmountCategoryChange = { viewModel.setSmallAmountCategoryId(it) },
+                    onImportCategoriesCsv = { uri -> viewModel.importCategoriesCsv(uri) },
+                    onImportCounterpartiesCsv = { uri -> viewModel.importCounterpartiesCsv(uri) }
                 )
             }
         }

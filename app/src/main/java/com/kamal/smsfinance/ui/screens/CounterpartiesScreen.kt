@@ -37,8 +37,8 @@ fun CounterpartiesScreen(
                 Icon(Icons.Filled.Add, contentDescription = "افزودن طرف حساب")
             }
         }
-    ) { innerPadding ->
-        Column(modifier = Modifier.padding(innerPadding).fillMaxSize()) {
+    ) { padding ->
+        Column(modifier = Modifier.padding(padding).fillMaxSize()) {
             Row(
                 modifier = Modifier.fillMaxWidth().padding(16.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
