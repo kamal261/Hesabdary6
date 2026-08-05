@@ -26,6 +26,7 @@ import kotlinx.coroutines.withContext
  * transaction. Lets the user read messages before/after it to recall context
  * (who the payment belonged to, what it was for, etc.).
  */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SmsContextScreen(
     sender: String,

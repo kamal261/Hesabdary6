@@ -21,6 +21,7 @@ import com.kamal.smsfinance.util.JalaliDate
  * Lists all transactions belonging to one bank (opened from the stats
  * "تفکیک بر اساس بانک" breakdown).
  */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun BankTransactionsScreen(
     bank: String,
