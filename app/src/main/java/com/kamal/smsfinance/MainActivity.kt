@@ -165,7 +165,8 @@ private fun AppRoot(viewModel: TransactionViewModel) {
                         }
                     }
                 }
-            }
+            },
+            confirmButton = {}
         )
     }
 
