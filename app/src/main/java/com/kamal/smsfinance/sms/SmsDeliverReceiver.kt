@@ -6,6 +6,8 @@ import android.content.Intent
 import android.provider.Telephony
 import android.util.Log
 import com.kamal.smsfinance.SmsFinanceApp
+import com.kamal.smsfinance.data.Transaction
+import com.kamal.smsfinance.data.TransactionType
 
 /**
  * Handles SMS_DELIVER broadcast - REQUIRED for Default SMS App.
@@ -16,14 +18,6 @@ class SmsDeliverReceiver : BroadcastReceiver() {
     private val TAG = "SmsDeliverReceiver"
 
     override fun onReceive(context: Context, intent: Intent) {
-        val pdus = intent.getSerializableExtra("pdus") as Array<Any>?
-        val format = intent.getStringExtra("format")
-
-        if (pdus == null) {
-            Log.w(TAG, "SMS_DELIVER received with no pdus")
-            return
-        }
-
         val messages = Telephony.Sms.Intents.getMessagesFromIntent(intent)
         for (message in messages) {
             val originatingAddress = message.originatingAddress ?: ""
@@ -48,15 +42,14 @@ class SmsDeliverReceiver : BroadcastReceiver() {
         // Check if sender matches our own number (if known)
         val myNumber = context.getSharedPreferences("sms_finance", Context.MODE_PRIVATE)
             .getString("own_phone_number", null)
-        return myNumber != null && sender.contains(myNumber.last(10))
+        return myNumber != null && sender.endsWith(myNumber.takeLast(10))
     }
 
     private fun parseAndStore(context: Context, sender: String, body: String, timestamp: Long) {
         // Delegate to existing SmsParser + Repository
-        // This mirrors SmsReceiver logic but for SMS_DELIVER
         val result = SmsParser.parse(body)
         if (result != null && result.type != TransactionType.IGNORED) {
-            val transaction = com.kamal.smsfinance.data.Transaction(
+            val transaction = Transaction(
                 amountToman = result.amount,
                 type = result.type,
                 bankName = result.bank,
