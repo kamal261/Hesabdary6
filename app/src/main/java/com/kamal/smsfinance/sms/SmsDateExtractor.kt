@@ -22,11 +22,11 @@ object SmsDateExtractor {
     /** Converts Persian digits to Latin. Keeps other chars as-is. */
     private fun toLatin(s: String): String = s.map { FA_DIGITS[it] ?: it }.joinToString("")
 
-    // Jalali date: 1404/05/12  or  ۱۴۰۴/۰۵/۱۲  (4-2-2 digits, any of / - . separators)
-    private val JALALI_DATE = Regex("""(13|14)\d{2}\s*[/\-\.]\s*\d{1,2}\s*[/\-\.]\s*\d{1,2}""")
+    // Jalali date: 1404/05/12  or  ۱۴۰۴/۰۵/۱۲  (4-2-2 digits, any of / - . \ separators)
+    private val JALALI_DATE = Regex("""(13|14)\d{2}\s*[\-\\/\.]\s*\d{1,2}\s*[\-\\/\.]\s*\d{1,2}""")
 
     // Gregorian date: 2025/07/15 or 2025-07-15
-    private val GREGORIAN_DATE = Regex("""(20\d{2})\s*[/\-\.]\s*\d{1,2}\s*[/\-\.]\s*\d{1,2}""")
+    private val GREGORIAN_DATE = Regex("""(20\d{2})\s*[\-\\/\.]\s*\d{1,2}\s*[\-\\/\.]\s*\d{1,2}""")
 
     // Clock time: 14:30 or 14:30:00 (also Persian digits)
     private val TIME = Regex("""([01]?\d|2[0-3]):[0-5]\d(?::[0-5]\d)?""")
@@ -107,7 +107,7 @@ object SmsDateExtractor {
 
         // 2) Numeric Jalali date: 1404/05/12
         JALALI_DATE.find(latin)?.let { m ->
-            val parts = m.value.replace(Regex("""\s"""), "").split(Regex("""[/\-\.]"""))
+            val parts = m.value.replace(Regex("""\s"""), "").split(Regex("""[/\\-\.]"""))
             if (parts.size == 3) {
                 val (y, mo, d) = parts.map { it.toInt() }
                 return withTime(jalaliToEpoch(y, mo, d), latin)
@@ -116,7 +116,7 @@ object SmsDateExtractor {
 
         // 3) Gregorian date: 2025/07/15
         GREGORIAN_DATE.find(latin)?.let { m ->
-            val parts = m.value.replace(Regex("""\s"""), "").split(Regex("""[/\-\.]"""))
+            val parts = m.value.replace(Regex("""\s"""), "").split(Regex("""[/\\-\.]"""))
             if (parts.size == 3) {
                 val (y, mo, d) = parts.map { it.toInt() }
                 val cal = Calendar.getInstance()
