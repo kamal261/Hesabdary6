@@ -13,8 +13,12 @@ import java.util.regex.Pattern
 object BlocklistEngine {
 
     /** Pre-compiled patterns for performance */
-    private val compiledPatterns: List<CompiledPattern> = SEED_BLOCKLIST.map { pattern ->
-        CompiledPattern(pattern.id, Pattern.compile(pattern.regex, Pattern.CASE_INSENSITIVE), pattern.description)
+    private val compiledPatterns: List<CompiledPattern> = buildCompiledPatterns()
+
+    private fun buildCompiledPatterns(): List<CompiledPattern> {
+        return SEED_BLOCKLIST.map { pattern ->
+            CompiledPattern(pattern.id, Pattern.compile(pattern.regex, Pattern.CASE_INSENSITIVE), pattern.description)
+        }
     }
 
     /**

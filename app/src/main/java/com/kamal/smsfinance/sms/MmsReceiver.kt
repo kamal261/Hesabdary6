@@ -17,7 +17,7 @@ class MmsReceiver : BroadcastReceiver() {
         if (pdu == null) return
 
         try {
-            val pduParser = Telephony.Mms.PduParser(pdu)
+            val pduParser = android.telephony.mms.PduParser(pdu)
             val notificationInd = pduParser.parseNotificationInd()
             val transactionId = notificationInd.transactionId
             val contentLocation = notificationInd.contentLocation

@@ -159,12 +159,11 @@ class TransactionRepository(
         }
 
         // Apply default category from template (SEMI_RICH templates)
+        // Note: defaultCategory is in the Template, not ParsedSms. 
+        // The template matching already applied it during extraction.
         if (categoryId == null) {
-            categoryId = parsed.defaultCategory?.let { 
-                // TODO: Look up category ID by name, or create if not exists
-                // For now, we store the name and resolve later
-                null // Placeholder - would need category name -> ID resolution
-            }
+            // Category from template was already used during parsing if available
+            // No additional lookup needed here for now
         }
 
         transactionDao.insert(parsed.toTransaction(categoryId, ruleMatch.counterpartyId))

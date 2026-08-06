@@ -15,7 +15,7 @@ import java.util.concurrent.TimeUnit
 object DedupEngine {
 
     /** Time window for duplicate detection (5 minutes) */
-    private const val DEDUP_WINDOW_MILLIS = TimeUnit.MINUTES.toMillis(5)
+    private const val DEDUP_WINDOW_MILLIS: Long = 5 * 60 * 1000 // 5 minutes in millis
 
     /** Max entries to keep in memory (auto-prunes old entries) */
     private const val MAX_ENTRIES = 10000

@@ -10,30 +10,6 @@ package com.kamal.smsfinance.sms
 import com.kamal.smsfinance.data.TransactionType
 import com.kamal.smsfinance.util.JalaliDate
 
-/** Intermediate result of parsing one SMS, before it becomes a Room Transaction. */
-data class ParsedSms(
-    val sender: String,
-    val amountToman: Long,
-    val type: TransactionType,
-    val bankName: String,
-    val description: String,
-    val timestamp: Long,
-    val rawSms: String,
-    val accountTail: String?
-)
-
-/**
- * Outcome of trying to parse one SMS.
- * - Recognized: a full transaction was extracted (via Template RICH/SEMI_RICH).
- * - Unidentified: the message looked bank-related but couldn't be fully parsed.
- * - Ignored: confidently not a transaction (OTP, promo, balance-only, non-bank).
- */
-sealed class SmsParseResult {
-    data class Recognized(val parsed: ParsedSms) : SmsParseResult()
-    data class Unidentified(val sender: String, val body: String, val timestamp: Long) : SmsParseResult()
-    object Ignored : SmsParseResult()
-}
-
 /**
  * Result of balance reconciliation check.
  */

@@ -7,6 +7,7 @@ import android.provider.Telephony
 import android.util.Log
 import com.kamal.smsfinance.SmsFinanceApp
 import com.kamal.smsfinance.data.Transaction
+import com.kamal.smsfinance.data.TransactionSource
 import com.kamal.smsfinance.data.TransactionType
 
 /**
@@ -47,18 +48,27 @@ class SmsDeliverReceiver : BroadcastReceiver() {
 
     private fun parseAndStore(context: Context, sender: String, body: String, timestamp: Long) {
         // Delegate to existing SmsParser + Repository
-        val result = SmsParser.parse(body)
-        if (result != null && result.type != TransactionType.IGNORED) {
-            val transaction = Transaction(
-                amountToman = result.amount,
-                type = result.type,
-                bankName = result.bank,
-                description = result.description,
-                date = if (timestamp > 0) timestamp else System.currentTimeMillis(),
-                source = "SMS_DELIVER"
-            )
-            // Use the app's repository (via Application context)
-            (context.applicationContext as? SmsFinanceApp)?.transactionRepository?.insert(transaction)
+        val result = SmsParser.parse(sender, body, timestamp)
+        when (result) {
+            is SmsParseResult.Recognized -> {
+                val parsed = result.parsed
+                val transaction = Transaction(
+                    amountToman = parsed.amountToman,
+                    type = parsed.type,
+                    bankName = parsed.bankName,
+                    description = parsed.description,
+                    date = parsed.timestamp,
+                    source = TransactionSource.SMS_DELIVER,
+                    rawSms = parsed.rawSms,
+                    smsSender = parsed.sender,
+                    accountTail = parsed.accountTail
+                )
+                // Use the app's repository (via Application context)
+                (context.applicationContext as? SmsFinanceApp)?.transactionRepository?.insert(transaction)
+            }
+            is SmsParseResult.Unidentified, SmsParseResult.Ignored -> {
+                // Do nothing - Unidentified goes to separate table, Ignored is discarded
+            }
         }
     }
 }

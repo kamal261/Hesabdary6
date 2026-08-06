@@ -15,12 +15,14 @@ import java.util.regex.Pattern
  */
 object TemplateEngine {
 
-    /** Pre-compiled template patterns */
-    private val compiledTemplates: List<CompiledTemplate> = TEMPLATES.map { template ->
-        CompiledTemplate(
-            template,
-            Pattern.compile(template.regex, Pattern.CASE_INSENSITIVE)
-        )
+    /** Pre-compiled template patterns - lazy initialization to avoid compile-time constant requirement */
+    private val compiledTemplates: List<CompiledTemplate> by lazy {
+        TEMPLATES.map { template ->
+            CompiledTemplate(
+                template,
+                Pattern.compile(template.regex, Pattern.CASE_INSENSITIVE)
+            )
+        }
     }
 
     /**
