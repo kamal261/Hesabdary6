@@ -85,17 +85,18 @@ class RuleEngineTest {
     }
 
     @Test
-    fun `should match despite ZWNJ vs space whether in rule or text`() {
-        val rulesWithZwnj = listOf(rule("میخواهم", categoryId = 1L))
-        // Text has no ZWNJ: "میخواهم" vs "می خواهم" -- after normalization both become "می خواهم".
-        val result = engine.evaluate("میخواهم پرداخت کنم", rulesWithZwnj)
-        assertNotNull(result.matchedRule, "rule with 'می' should match text with 'میخواهم' after ZWNJ normalization")
+    fun `should match a ZWNJ rule against a space-using text and vice versa`() {
+        // normalizeText turns ZWNJ (U+200C) into a space, so a rule written with
+        // ZWNJ ("می‌خواهم") must match a message that spells it with a space
+        // ("می خواهم"), and a space-rule must match a ZWNJ text. Both sides
+        // converge on the same normalized form.
+        val zwnjRules = listOf(rule("می\u200Cخواهم", categoryId = 1L))
+        val spaceTextResult = engine.evaluate("می خواهم پرداخت کنم", zwnjRules)
+        assertEquals(1L, spaceTextResult.categoryId, "rule with ZWNJ should match text with space")
 
-        // And ZWNJ in the rule itself.
-        val zwnjRules = listOf(rule("می\u200Cخواهم", categoryId = 2L))
-        val result2 = engine.evaluate("میخواهم پرداخت کنم", zwnjRules)
-        // normalize replaces ZWNJ with space => both sides become "می خواهم"
-        assertEquals(2L, result2.categoryId)
+        val spaceRules = listOf(rule("می خواهم", categoryId = 2L))
+        val zwnjTextResult = engine.evaluate("می\u200Cخواهم پرداخت کنم", spaceRules)
+        assertEquals(2L, zwnjTextResult.categoryId, "rule with space should match text with ZWNJ")
     }
 
     @Test

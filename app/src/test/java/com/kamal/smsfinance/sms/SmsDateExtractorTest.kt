@@ -17,8 +17,6 @@ import org.junit.jupiter.api.Test
  */
 class SmsDateExtractorTest {
 
-    // ---------- Fallback when no date ----------
-
     @Test
     fun `blank body returns fallback`() {
         assertEquals(1111L, SmsDateExtractor.extract("", 1111L))
@@ -29,8 +27,6 @@ class SmsDateExtractorTest {
         val fallback = 1_700_000_000_000L
         assertEquals(fallback, SmsDateExtractor.extract("مبلغ 500,000 تومان", fallback))
     }
-
-    // ---------- Numeric Jalali date (round-trip, no conversion) ----------
 
     @Test
     fun `numeric jalali date is parsed (1404 slash)`() {
@@ -62,8 +58,6 @@ class SmsDateExtractorTest {
         assertEquals("1404/05/12 - 14:30", JalaliDate.formatDateTime(result))
     }
 
-    // ---------- Named Jalali month ----------
-
     @Test
     fun `named Jalali month is parsed (12 مرداد 1404)`() {
         val result = SmsDateExtractor.extract("مبلغ 200,000 در تاریخ 12 مرداد 1404", 0L)
@@ -75,8 +69,6 @@ class SmsDateExtractorTest {
         val result = SmsDateExtractor.extract("۱۲ مرداد ۱۴۰۴", 0L)
         assertEquals("1404/05/12", JalaliDate.formatDate(result))
     }
-
-    // ---------- Sanity ----------
 
     @Test
     fun `extracted date is not the fallback when a date exists`() {

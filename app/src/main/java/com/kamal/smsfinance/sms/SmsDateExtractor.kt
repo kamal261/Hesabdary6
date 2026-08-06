@@ -36,7 +36,7 @@ object SmsDateExtractor {
         "مهر", "آبان", "آذر", "دی", "بهمن", "اسفند"
     )
     // e.g. "12 مرداد 1404"
-    private val JALALI_NAMED = Regex("""(\d{1,2})\s+(فروردین|اردیبهشت|خرداد|تیر|مرداد|شهریور|مهر|آبان|آذر|دی|بهمن|اسفند)\s+(13|14)\d{2}""")
+    private val JALALI_NAMED = Regex("""(\d{1,2})\s+(فروردین|اردیبهشت|خرداد|تیر|مرداد|شهریور|مهر|آبان|آذر|دی|بهمن|اسفند)\s+(1[34]\d{2})""")
 
     /** Jalali (y,m,d) -> epoch millis at 00:00 local. */
     private fun jalaliToEpoch(jy: Int, jm: Int, jd: Int): Long {
@@ -48,45 +48,48 @@ object SmsDateExtractor {
     }
 
     /** Well-known arithmetic Jalali->Gregorian conversion (jalaali algorithm). */
-    private fun jalaliToGregorian(jy: Int, jm: Int, jd: Int): Triple<Int, Int, Int> =
-        canonicalJalaliToGregorian(jy, jm, jd)
-
-    private fun canonicalJalaliToGregorian(jy: Int, jm: Int, jd: Int): Triple<Int, Int, Int> {
-        // Standard JDF algorithm (from jalaali-js)
+    private fun jalaliToGregorian(jy: Int, jm: Int, jd: Int): Triple<Int, Int, Int> {
+        // Faithful port of jalaali-js (verified against the published library across
+        // known dates, e.g. J 1404/05/12 -> G 2025-08-03). Int division in Kotlin
+        // truncates toward zero, matching JS ~~ semantics, so no rounding surprises.
         val breaks = intArrayOf(-61, 9, 38, 199, 426, 686, 756, 818, 1111, 1181, 1210, 1635, 2060, 2097, 2192, 2262, 2324, 2394, 2456, 3178)
+
+        // jalCalCore: find the Gregorian year and March day when Jala year starts.
         val gy = jy + 621
         var leapJ = -14
         var jp = breaks[0]
         var jump = 0
+        var jm2 = 0
         for (i in 1 until breaks.size) {
-            val jm2 = breaks[i]
+            jm2 = breaks[i]
             jump = jm2 - jp
             if (jy < jm2) break
-            leapJ += jump / 33 * 8 + ((jump % 33) + 3) / 4
+            leapJ += jump / 33 * 8 + (jump % 33) / 4
             jp = jm2
         }
-        var n = jy - jp
+        val n = jy - jp
         leapJ += (n / 33) * 8 + ((n % 33) + 3) / 4
-        val leapG = (gy / 4) - (gy / 100) + (gy / 400) - 460
+        if (jump % 33 == 4 && jump - n == 4) leapJ += 1
+        val leapG = gy / 4 - (gy / 100 + 1) * 3 / 4 - 150
         val march = 20 + leapJ - leapG
-        var jm2 = if (jm <= 7) (jm - 1) * 31 else (jm - 1) * 30 + 6
-        jm2 += jd
-        val gd = jm2 - march + 79
-        val gy2 = gy
-        // Adjust month/day
-        var gm = 0
-        var gd2 = gd
-        if (gd <= 0) {
-            gm = 12
-            gd2 += 31
-        } else {
-            val gMonthDays = intArrayOf(31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31)
-            for (i in 0 until 12) {
-                if (gd2 <= gMonthDays[i]) { gm = i + 1; break }
-                gd2 -= gMonthDays[i]
-            }
+
+        // j2d then d2g.
+        fun g2d(gy2: Int, gm: Int, gd: Int): Int {
+            var d = ((gy2 + (gm - 8) / 6 + 100100) * 1461) / 4 +
+                (153 * ((gm + 9) % 12) + 2) / 5 + gd - 34840408
+            d = d - ((gy2 + 100100 + (gm - 8) / 6) / 100) * 3 / 4 + 752
+            return d
         }
-        return Triple(gy2, gm, gd2)
+        val jdn = g2d(gy, 3, march) + (jm - 1) * 31 - jm / 7 * (jm - 7) + jd - 1
+
+        // d2g(jdn)
+        var j = 4 * jdn + 139361631
+        j = j + ((4 * jdn + 183187720) / 146097) * 3 / 4 * 4 - 3908
+        val di = (j % 1461) / 4 * 5 + 308
+        val gd2 = (di % 153) / 5 + 1
+        val gm2 = (di / 153) % 12 + 1
+        val gy2 = j / 1461 - 100100 + (8 - gm2) / 6
+        return Triple(gy2, gm2, gd2)
     }
 
     /**
