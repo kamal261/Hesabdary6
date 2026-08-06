@@ -13,6 +13,7 @@ import com.kamal.smsfinance.sms.SmsParseResult
 import com.kamal.smsfinance.sms.SmsReaderUtil
 import com.kamal.smsfinance.util.SettingsStore
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.first
 import java.util.concurrent.TimeUnit
 
 class TransactionRepository(
