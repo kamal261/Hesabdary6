@@ -1,5 +1,6 @@
 package com.kamal.smsfinance.sms
 
+import com.kamal.smsfinance.data.TransactionType
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.Test
 
