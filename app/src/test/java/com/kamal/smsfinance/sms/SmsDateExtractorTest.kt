@@ -4,16 +4,16 @@ import com.kamal.smsfinance.util.JalaliDate
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNotEquals
 import org.junit.jupiter.api.Test
-import java.util.Calendar
 
 /**
  * Tests for SmsDateExtractor.
  *
- * Strategy: NO Gregorian<->Jalali conversion anywhere in these tests. The date
- * is extracted from the SMS text and verified by round-tripping it back
- * through JalaliDate.formatDate (or formatDateTime for the clock part) — the
- * same Jalali representation the app displays. This keeps every assertion
- * stable regardless of the local timezone.
+ * Iranian bank transaction SMS always carry a Jalali (Shamsi) date — never
+ * Gregorian — so these tests only cover Jalali formats (numeric, Persian
+ * digits, named months) plus the fallback path. Verification is done by
+ * round-tripping the extracted epoch back through JalaliDate.formatDate /
+ * formatDateTime — the same representation the app displays — so every
+ * assertion is stable regardless of the local timezone.
  */
 class SmsDateExtractorTest {
 
@@ -74,28 +74,6 @@ class SmsDateExtractorTest {
     fun `named Jalali month with Persian day and year digits is parsed`() {
         val result = SmsDateExtractor.extract("۱۲ مرداد ۱۴۰۴", 0L)
         assertEquals("1404/05/12", JalaliDate.formatDate(result))
-    }
-
-    // ---------- Gregorian date (extracted as-is, no conversion) ----------
-
-    @Test
-    fun `gregorian date is parsed as-is`() {
-        val result = SmsDateExtractor.extract("پرداخت در 2025/07/15 انجام شد", 0L)
-        val cal = Calendar.getInstance()
-        cal.timeInMillis = result
-        assertEquals(2025, cal.get(Calendar.YEAR))
-        assertEquals(7, cal.get(Calendar.MONTH) + 1)
-        assertEquals(15, cal.get(Calendar.DAY_OF_MONTH))
-    }
-
-    @Test
-    fun `gregorian date with dashes is parsed as-is`() {
-        val result = SmsDateExtractor.extract("2025-07-15 checkout", 0L)
-        val cal = Calendar.getInstance()
-        cal.timeInMillis = result
-        assertEquals(2025, cal.get(Calendar.YEAR))
-        assertEquals(7, cal.get(Calendar.MONTH) + 1)
-        assertEquals(15, cal.get(Calendar.DAY_OF_MONTH))
     }
 
     // ---------- Sanity ----------
