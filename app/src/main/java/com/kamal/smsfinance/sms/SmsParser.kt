@@ -143,13 +143,13 @@ object SmsParser {
     // Matches amounts like: "مبلغ: 500,000 تومان", "500000 ريال", "1,250,000ریال"
     // Supports Persian thousands separator ٬ and plain , as well as Persian digits.
     private val AMOUNT_REGEX = Regex(
-        """([\d۰-۹][\d۰-۹,٬./]*)\s*(تومان|ریال|ريال|Rials?|Toman)""",
+        """([\d۰-۹][\d۰-۹,٬،./]*)\s*(تومان|ریال|ريال|Rials?|Toman)""",
         RegexOption.IGNORE_CASE
     )
 
     // Fallback: a bare number of 5+ digits immediately followed by common
     // currency-less bank phrasing ("مبلغ 500000 از").
-    private val BARE_AMOUNT_REGEX = Regex("""مبلغ[:\s]*([\d۰-۹][\d۰-۹,٬]*)""")
+    private val BARE_AMOUNT_REGEX = Regex("""مبلغ[:\s]*([\d۰-۹][\d۰-۹,٬،]*)""")
 
     // Final fallback for terse, keyword-less, unit-less ledger lines (e.g.
     // Resalat Bank: "-2,260,000"). A leading sign right before the digits is
@@ -228,7 +228,7 @@ object SmsParser {
 
         if (type != null && amount != null && amount > 0 && isBankOriginated(sender, body)) {
             val bank = identifyBank(sender, body) ?: "نامشخص"
-            val tail = TAIL_REGEX.find(body)?.groupValues?.get(1)
+            val tail = TAIL_REGEX.find(body)?.groupValues?.get(1)?.takeLast(4)
             val description = buildDescription(body, type)
             // Use the transaction date printed INSIDE the SMS when present;
             // fall back to the delivery timestamp otherwise.
@@ -265,7 +265,9 @@ object SmsParser {
         }
         // Fall back to scanning the body text itself for a bank name mention.
         for ((bankName, identifiers) in BANK_SENDERS) {
-            if (identifiers.any { it.length > 3 && body.contains(it, ignoreCase = true) }) return bankName
+            if (identifiers.any { id ->
+                    id.length >= 3 && (body.contains("$id ") || body.contains("$id\n") || body.contains("$id،"))
+                }) return bankName
         }
         return null
     }
@@ -284,6 +286,10 @@ object SmsParser {
                 val incomeIdx = INCOME_KEYWORDS.minOf { kw -> body.indexOf(kw).let { if (it < 0) Int.MAX_VALUE else it } }
                 if (expenseIdx <= incomeIdx) TransactionType.EXPENSE else TransactionType.INCOME
             }
+            // Classic bank debit phrasing ("از حساب شما پرید/کسر/برداشت") is a
+            // reliable EXPENSE signal even without a keyword — banks use it
+            // for outbound money (bills, card payments, transfers out).
+            BANK_DEBIT_PHRASES.any { body.contains(it) } -> TransactionType.EXPENSE
             // No keyword at all -- terse ledger-style SMS (e.g. Resalat Bank).
             // Only trusted when a balance line is also present (see
             // BALANCE_LINE_REGEX doc-comment); otherwise this is almost
