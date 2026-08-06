@@ -107,7 +107,7 @@ object SmsDateExtractor {
 
         // 2) Numeric Jalali date: 1404/05/12
         JALALI_DATE.find(latin)?.let { m ->
-            val parts = m.value.replace(Regex("""\s"""), "").split(Regex("""[/\\-\.]"""))
+            val parts = m.value.replace(Regex("""\s"""), "").split(Regex("""[/.-]"""))
             if (parts.size == 3) {
                 val (y, mo, d) = parts.map { it.toInt() }
                 return withTime(jalaliToEpoch(y, mo, d), latin)
@@ -116,7 +116,7 @@ object SmsDateExtractor {
 
         // 3) Gregorian date: 2025/07/15
         GREGORIAN_DATE.find(latin)?.let { m ->
-            val parts = m.value.replace(Regex("""\s"""), "").split(Regex("""[/\\-\.]"""))
+            val parts = m.value.replace(Regex("""\s"""), "").split(Regex("""[/.-]"""))
             if (parts.size == 3) {
                 val (y, mo, d) = parts.map { it.toInt() }
                 val cal = Calendar.getInstance()
