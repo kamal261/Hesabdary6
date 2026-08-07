@@ -71,6 +71,12 @@ class TransactionViewModel(application: Application) : AndroidViewModel(applicat
     val webhookUrl: StateFlow<String> = settings.webhookUrl
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), "")
 
+    val firstScanDone: StateFlow<Boolean> = settings.firstScanDone
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), false)
+
+    val scanDaysBack: StateFlow<Int> = settings.scanDaysBack
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 30)
+
     val smallAmountEnabled: StateFlow<Boolean> = settings.smallAmountEnabled
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), false)
     val smallAmountThreshold: StateFlow<Long> = settings.smallAmountThreshold
@@ -103,16 +109,50 @@ class TransactionViewModel(application: Application) : AndroidViewModel(applicat
     // --- SMS scanning ---
 
     fun scanInbox() {
+        scanInboxInternal(null)
+    }
+
+    private fun scanInboxInternal(daysBack: Int?) {
         viewModelScope.launch {
             _isLoading.value = true
             try {
-                val added = repository.scanInboxAndImport()
+                val added = if (daysBack != null) {
+                    repository.scanInboxAndImport(daysBack)
+                } else {
+                    repository.scanInboxAndImport()
+                }
                 _message.value = UiMessage("$added تراکنش جدید از پیامک‌ها شناسایی و ذخیره شد")
             } catch (e: Exception) {
                 _message.value = UiMessage("خطا در اسکن پیامک‌ها: ${e.message}", isError = true)
             } finally {
                 _isLoading.value = false
             }
+        }
+    }
+
+    /** Call this on first launch if user hasn't done initial scan yet. Shows a dialog to pick day range. */
+    fun maybeShowFirstScanDialog(onShowDialog: (Int) -> Unit) {
+        viewModelScope.launch {
+            val done = settings.firstScanDone.first()
+            if (!done) {
+                val days = settings.scanDaysBack.first()
+                onShowDialog(days)
+            }
+        }
+    }
+
+    fun confirmFirstScan(daysBack: Int) {
+        viewModelScope.launch {
+            settings.setFirstScanDone(true)
+            settings.setScanDaysBack(daysBack)
+            scanInboxInternal(daysBack)
+        }
+    }
+
+    fun skipFirstScan() {
+        viewModelScope.launch {
+            settings.setFirstScanDone(true)
+            scanInboxInternal(null)
         }
     }
 
@@ -185,8 +225,8 @@ class TransactionViewModel(application: Application) : AndroidViewModel(applicat
 
     // --- Categories ---
 
-    fun addCategory(name: String, kind: CategoryKind) {
-        viewModelScope.launch { repository.addCategory(name, kind) }
+    fun addCategory(name: String, kind: CategoryKind, parentId: Long? = null) {
+        viewModelScope.launch { repository.addCategory(name, kind, parentId) }
     }
 
     fun deleteCategory(category: Category) {

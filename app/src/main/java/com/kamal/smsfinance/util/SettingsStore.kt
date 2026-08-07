@@ -4,6 +4,7 @@ package com.kamal.smsfinance.util
 import android.content.Context
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
@@ -20,6 +21,8 @@ class SettingsStore(private val context: Context) {
     private val THEME_KEY = stringPreferencesKey("theme_mode")
     private val WEBHOOK_KEY = stringPreferencesKey("sheets_webhook_url")
     private val AUTO_SCAN_KEY = booleanPreferencesKey("auto_scan_on_launch")
+    private val FIRST_SCAN_DONE_KEY = booleanPreferencesKey("first_scan_done")
+    private val SCAN_DAYS_BACK_KEY = intPreferencesKey("scan_days_back")
     private val SMALL_AMOUNT_ENABLED_KEY = booleanPreferencesKey("small_amount_enabled")
     private val SMALL_AMOUNT_THRESHOLD_KEY = longPreferencesKey("small_amount_threshold")
     private val SMALL_AMOUNT_CATEGORY_KEY = longPreferencesKey("small_amount_category_id")
@@ -31,6 +34,12 @@ class SettingsStore(private val context: Context) {
     val webhookUrl: Flow<String> = context.dataStore.data.map { it[WEBHOOK_KEY] ?: "" }
 
     val autoScanOnLaunch: Flow<Boolean> = context.dataStore.data.map { it[AUTO_SCAN_KEY] ?: true }
+
+    /** Whether the user has completed the initial scan (with day-range prompt). */
+    val firstScanDone: Flow<Boolean> = context.dataStore.data.map { it[FIRST_SCAN_DONE_KEY] ?: false }
+
+    /** How many days back to scan on first run (user-chosen). Default 30. */
+    val scanDaysBack: Flow<Int> = context.dataStore.data.map { it[SCAN_DAYS_BACK_KEY] ?: 30 }
 
     // Auto-categorization for small expenses (e.g. anything under 100,000
     // Toman goes straight into a "متفرقه"-style category the user picks).
@@ -48,6 +57,14 @@ class SettingsStore(private val context: Context) {
 
     suspend fun setAutoScanOnLaunch(enabled: Boolean) {
         context.dataStore.edit { it[AUTO_SCAN_KEY] = enabled }
+    }
+
+    suspend fun setFirstScanDone(done: Boolean) {
+        context.dataStore.edit { it[FIRST_SCAN_DONE_KEY] = done }
+    }
+
+    suspend fun setScanDaysBack(days: Int) {
+        context.dataStore.edit { it[SCAN_DAYS_BACK_KEY] = days }
     }
 
     suspend fun setSmallAmountEnabled(enabled: Boolean) {

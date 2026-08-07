@@ -46,7 +46,7 @@ class Converters {
 
 @Database(
     entities = [Transaction::class, Category::class, Counterparty::class, Check::class, SmartRule::class, UnidentifiedSms::class],
-    version = 5,
+    version = 6,
     exportSchema = true
 )
 @TypeConverters(Converters::class)

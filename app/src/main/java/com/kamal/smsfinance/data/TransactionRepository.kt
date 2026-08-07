@@ -100,6 +100,20 @@ class TransactionRepository(
         return added
     }
 
+    /**
+     * Scans SMS inbox but only imports messages from the last [daysBack] days.
+     * Used for the first-run scan where the user chooses how far back to go.
+     */
+    suspend fun scanInboxAndImport(daysBack: Int): Int {
+        val cutoff = System.currentTimeMillis() - TimeUnit.DAYS.toMillis(daysBack.toLong())
+        val messages = SmsReaderUtil.readInbox(context).filter { it.timestamp >= cutoff }
+        var added = 0
+        for (msg in messages) {
+            if (handleParseResult(SmsParser.parse(msg.sender, msg.body, msg.timestamp))) added++
+        }
+        return added
+    }
+
     /** Called from SmsReceiver when a new SMS arrives in real time. Silent -- no notification. */
     suspend fun importSingleSms(sender: String, body: String, timestamp: Long) {
         handleParseResult(SmsParser.parse(sender, body, timestamp))
@@ -214,8 +228,8 @@ class TransactionRepository(
 
     val allCategories: Flow<List<Category>> = categoryDao.getAll()
 
-    suspend fun addCategory(name: String, kind: CategoryKind) =
-        categoryDao.insert(Category(name = name, kind = kind, isDefault = false))
+    suspend fun addCategory(name: String, kind: CategoryKind, parentId: Long? = null) =
+        categoryDao.insert(Category(name = name, kind = kind, isDefault = false, parentId = parentId))
 
     suspend fun deleteCategory(category: Category) = categoryDao.delete(category)
 

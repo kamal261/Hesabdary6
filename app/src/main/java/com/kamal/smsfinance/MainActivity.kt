@@ -16,9 +16,14 @@ import androidx.compose.material.icons.filled.Receipt
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.foundation.layout.padding
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.compose.ui.text.input.KeyboardOptions
+import androidx.compose.ui.text.input.KeyboardType
 import com.kamal.smsfinance.permission.SmsPermissionGate
 import com.kamal.smsfinance.ui.TransactionViewModel
 import com.kamal.smsfinance.ui.screens.*
@@ -54,7 +59,15 @@ class MainActivity : ComponentActivity() {
 
             SmsFinanceTheme(darkTheme = darkTheme) {
                 Surface(modifier = Modifier, color = MaterialTheme.colorScheme.background) {
-                    SmsPermissionGate(onGranted = { viewModel.scanInbox() }) {
+                    SmsPermissionGate(onGranted = {
+                        viewModel.maybeShowFirstScanDialog { days ->
+                            firstScanDialogDays = days
+                            showFirstScanDialog = true
+                        }
+                        if (!showFirstScanDialog) {
+                            viewModel.scanInbox()
+                        }
+                    }) {
                         AppRoot(viewModel)
                     }
                 }
@@ -82,10 +95,14 @@ private fun AppRoot(viewModel: TransactionViewModel) {
     val smallAmountEnabled by viewModel.smallAmountEnabled.collectAsState()
     val smallAmountThreshold by viewModel.smallAmountThreshold.collectAsState()
     val smallAmountCategoryId by viewModel.smallAmountCategoryId.collectAsState()
+    val firstScanDone by viewModel.firstScanDone.collectAsState()
+    val scanDaysBack by viewModel.scanDaysBack.collectAsState()
 
     var tab by remember { mutableStateOf(Tab.LIST) }
     var overlay by remember { mutableStateOf<Overlay?>(null) }
     var driveAccountEmail by remember { mutableStateOf(viewModel.driveSignedInAccount()?.email) }
+    var showFirstScanDialog by remember { mutableStateOf(false) }
+    var firstScanDialogDays by remember { mutableStateOf(30) }
 
     val snackbarHostState = remember { SnackbarHostState() }
     val context = LocalContext.current
@@ -154,7 +171,7 @@ private fun AppRoot(viewModel: TransactionViewModel) {
         Overlay.Categories -> {
             CategoriesScreen(
                 categories = categories,
-                onAdd = { name, kind -> viewModel.addCategory(name, kind) },
+                onAdd = { name, kind, parentId -> viewModel.addCategory(name, kind, parentId) },
                 onDelete = { viewModel.deleteCategory(it) },
                 onBack = { overlay = null }
             )
@@ -208,6 +225,22 @@ private fun AppRoot(viewModel: TransactionViewModel) {
             return
         }
         null -> Unit
+    }
+
+    // First-scan day-range dialog
+    if (showFirstScanDialog && !firstScanDone) {
+        FirstScanDialog(
+            initialDays = firstScanDialogDays,
+            onConfirm = { days ->
+                firstScanDialogDays = days
+                viewModel.confirmFirstScan(days)
+                showFirstScanDialog = false
+            },
+            onSkip = {
+                viewModel.skipFirstScan()
+                showFirstScanDialog = false
+            }
+        )
     }
 
     Scaffold(
@@ -339,4 +372,68 @@ private fun AppRoot(viewModel: TransactionViewModel) {
             }
         }
     }
+}
+
+@Composable
+private fun FirstScanDialog(
+    initialDays: Int,
+    onConfirm: (Int) -> Unit,
+    onSkip: () -> Unit
+) {
+    var days by remember { mutableStateOf(initialDays) }
+    AlertDialog(
+        onDismissRequest = onSkip,
+        title = { Text("اسکن اولیه پیامک‌ها") },
+        text = {
+            Column(modifier = Modifier.padding(16.dp).fillMaxWidth()) {
+                Text(
+                    "لطفاً انتخاب کنید پیامک‌های چند روز گذشته بررسی شوند. بازه‌ی طولانی‌تر زمان بیشتری می‌گیرد اما تاریخچه کامل‌تری می‌سازد.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(Modifier.height(16.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    OutlinedButton(
+                        onClick = { days = 7 },
+                        modifier = Modifier.weight(1f),
+                        colors = ButtonDefaults.outlinedButtonColors(
+                            containerColor = if (days == 7) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface
+                        )
+                    ) { Text("۷ روز") }
+                    OutlinedButton(
+                        onClick = { days = 30 },
+                        modifier = Modifier.weight(1f),
+                        colors = ButtonDefaults.outlinedButtonColors(
+                            containerColor = if (days == 30) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface
+                        )
+                    ) { Text("۳۰ روز") }
+                    OutlinedButton(
+                        onClick = { days = 90 },
+                        modifier = Modifier.weight(1f),
+                        colors = ButtonDefaults.outlinedButtonColors(
+                            containerColor = if (days == 90) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface
+                        )
+                    ) { Text("۹۰ روز") }
+                }
+                Spacer(Modifier.height(8.dp))
+                OutlinedTextField(
+                    value = days.toString(),
+                    onValueChange = { it.toIntOrNull()?.let { if (it in 1..365) days = it } },
+                    label = { Text("بازه دلخواه (روز)") },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { onConfirm(days) }) { Text("شروع اسکن") }
+        },
+        dismissButton = {
+            TextButton(onClick = onSkip) { Text("بعداً / کل پیامک‌ها") }
+        }
+    )
 }

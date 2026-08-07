@@ -2,10 +2,11 @@ package com.kamal.smsfinance.ui.screens
 
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.DeleteOutline
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -18,11 +19,21 @@ import com.kamal.smsfinance.data.CategoryKind
 @Composable
 fun CategoriesScreen(
     categories: List<Category>,
-    onAdd: (name: String, kind: CategoryKind) -> Unit,
+    onAdd: (name: String, kind: CategoryKind, parentId: Long?) -> Unit,
     onDelete: (Category) -> Unit,
     onBack: () -> Unit
 ) {
     var showAddDialog by remember { mutableStateOf(false) }
+
+    // Build parent -> children map
+    val childrenByParent = remember(categories) {
+        categories.filter { it.parentId != null }.groupBy { it.parentId!! }
+    }
+
+    // Top-level categories (no parent)
+    val topLevelCategories = remember(categories) {
+        categories.filter { it.parentId == null }
+    }
 
     Scaffold(
         topBar = {
@@ -42,20 +53,70 @@ fun CategoriesScreen(
             contentPadding = PaddingValues(16.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            items(categories, key = { it.id }) { cat ->
-                ElevatedCard(modifier = Modifier.fillMaxWidth()) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth().padding(16.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
+            topLevelCategories.forEach { cat ->
+                val hasChildren = childrenByParent[cat.id]?.isNotEmpty() == true
+                var expanded by remember { mutableStateOf(false) }
+
+                item(key = cat.id) {
+                    ElevatedCard(modifier = Modifier.fillMaxWidth()) {
                         Column {
-                            Text(cat.name, style = MaterialTheme.typography.titleMedium)
-                            Text(kindLabel(cat.kind), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        }
-                        if (!cat.isDefault) {
-                            IconButton(onClick = { onDelete(cat) }) {
-                                Icon(Icons.Filled.DeleteOutline, contentDescription = "حذف")
+                            Row(
+                                modifier = Modifier.fillMaxWidth().padding(16.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Column {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                    ) {
+                                        if (hasChildren) {
+                                            IconButton(onClick = { expanded = !expanded }) {
+                                                Icon(
+                                                    imageVector = if (expanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
+                                                    contentDescription = if (expanded) "بستن" else "باز کردن",
+                                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                                )
+                                            }
+                                        }
+                                        Text(cat.name, style = MaterialTheme.typography.titleMedium)
+                                    }
+                                    Text(kindLabel(cat.kind), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
+                                if (!cat.isDefault) {
+                                    IconButton(onClick = { onDelete(cat) }) {
+                                        Icon(Icons.Filled.DeleteOutline, contentDescription = "حذف")
+                                    }
+                                }
+                            }
+                            // Show children inline if expanded
+                            if (hasChildren && expanded) {
+                                childrenByParent[cat.id]?.forEach { child ->
+                                    ElevatedCard(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(16.dp, 0.dp, 16.dp, 16.dp),
+                                        colors = CardDefaults.elevatedCardColors(
+                                            containerColor = MaterialTheme.colorScheme.surfaceVariant
+                                        )
+                                    ) {
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth().padding(16.dp),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.SpaceBetween
+                                        ) {
+                                            Column {
+                                                Text("└ ${child.name}", style = MaterialTheme.typography.titleMedium)
+                                                Text(kindLabel(child.kind), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                            }
+                                            if (!child.isDefault) {
+                                                IconButton(onClick = { onDelete(child) }) {
+                                                    Icon(Icons.Filled.DeleteOutline, contentDescription = "حذف")
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
@@ -67,9 +128,10 @@ fun CategoriesScreen(
 
     if (showAddDialog) {
         AddCategoryDialog(
+            categories = topLevelCategories,
             onDismiss = { showAddDialog = false },
-            onConfirm = { name, kind ->
-                onAdd(name, kind)
+            onConfirm = { name, kind, parentId ->
+                onAdd(name, kind, parentId)
                 showAddDialog = false
             }
         )
@@ -84,9 +146,15 @@ private fun kindLabel(kind: CategoryKind): String = when (kind) {
 }
 
 @Composable
-private fun AddCategoryDialog(onDismiss: () -> Unit, onConfirm: (String, CategoryKind) -> Unit) {
+private fun AddCategoryDialog(
+    categories: List<Category>,
+    onDismiss: () -> Unit,
+    onConfirm: (String, CategoryKind, Long?) -> Unit
+) {
     var name by remember { mutableStateOf("") }
     var kind by remember { mutableStateOf(CategoryKind.EXPENSE) }
+    var parentId by remember { mutableStateOf<Long?>(null) }
+    var showParentDropdown by remember { mutableStateOf(false) }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -108,10 +176,59 @@ private fun AddCategoryDialog(onDismiss: () -> Unit, onConfirm: (String, Categor
                         }
                     }
                 }
+                if (categories.isNotEmpty()) {
+                    Spacer(Modifier.height(8.dp))
+                    Text("زیرمجموعه‌ی (اختیاری)", style = MaterialTheme.typography.bodyMedium)
+                    // Parent category dropdown using ExposedDropdownMenuBox
+                    androidx.compose.material3.ExposedDropdownMenuBox(
+                        expanded = showParentDropdown,
+                        onExpandedChange = { showParentDropdown = it },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        val selectedName = parentId?.let { categories.firstOrNull { it.id == it }?.name } ?: "بدون والد (دسته اصلی)"
+                        TextField(
+                            value = selectedName,
+                            onValueChange = {},
+                            label = { Text("دسته والد") },
+                            readOnly = true,
+                            trailingIcon = {
+                                Icon(
+                                    imageVector = if (showParentDropdown) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
+                                    contentDescription = null
+                                )
+                            },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(top = 8.dp)
+                        )
+                        androidx.compose.material3.DropdownMenu(
+                            expanded = showParentDropdown,
+                            onDismissRequest = { showParentDropdown = false }
+                        ) {
+                            // "None" option
+                            DropdownMenuItem(
+                                text = { Text("بدون والد (دسته اصلی)") },
+                                onClick = {
+                                    parentId = null
+                                    showParentDropdown = false
+                                }
+                            )
+                            categories.forEach { cat ->
+                                DropdownMenuItem(
+                                    text = { Text(cat.name) },
+                                    onClick = {
+                                        parentId = cat.id
+                                        showParentDropdown = false
+                                    }
+                                )
+                            }
+                        }
+                    }
+                }
             }
         },
         confirmButton = {
-            TextButton(onClick = { if (name.isNotBlank()) onConfirm(name, kind) }, enabled = name.isNotBlank()) {
+            TextButton(onClick = { if (name.isNotBlank()) onConfirm(name, kind, parentId) }, enabled = name.isNotBlank()) {
                 Text("افزودن")
             }
         },
