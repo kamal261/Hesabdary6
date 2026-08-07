@@ -8,6 +8,7 @@ import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material3.*
+import androidx.compose.material3.tokens.ButtonDefaults
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -53,66 +54,64 @@ fun CategoriesScreen(
             contentPadding = PaddingValues(16.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            topLevelCategories.forEach { cat ->
+            items(topLevelCategories, key = { it.id }) { cat ->
                 val hasChildren = childrenByParent[cat.id]?.isNotEmpty() == true
                 var expanded by remember { mutableStateOf(false) }
 
-                item(key = cat.id) {
-                    ElevatedCard(modifier = Modifier.fillMaxWidth()) {
-                        Column {
-                            Row(
-                                modifier = Modifier.fillMaxWidth().padding(16.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.SpaceBetween
-                            ) {
-                                Column {
-                                    Row(
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                                    ) {
-                                        if (hasChildren) {
-                                            IconButton(onClick = { expanded = !expanded }) {
-                                                Icon(
-                                                    imageVector = if (expanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
-                                                    contentDescription = if (expanded) "بستن" else "باز کردن",
-                                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
-                                                )
-                                            }
+                ElevatedCard(modifier = Modifier.fillMaxWidth()) {
+                    Column {
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(16.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Column {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    if (hasChildren) {
+                                        IconButton(onClick = { expanded = !expanded }) {
+                                            Icon(
+                                                imageVector = if (expanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
+                                                contentDescription = if (expanded) "بستن" else "باز کردن",
+                                                tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
                                         }
-                                        Text(cat.name, style = MaterialTheme.typography.titleMedium)
                                     }
-                                    Text(kindLabel(cat.kind), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    Text(cat.name, style = MaterialTheme.typography.titleMedium)
                                 }
-                                if (!cat.isDefault) {
-                                    IconButton(onClick = { onDelete(cat) }) {
-                                        Icon(Icons.Filled.DeleteOutline, contentDescription = "حذف")
-                                    }
+                                Text(kindLabel(cat.kind), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                            if (!cat.isDefault) {
+                                IconButton(onClick = { onDelete(cat) }) {
+                                    Icon(Icons.Filled.DeleteOutline, contentDescription = "حذف")
                                 }
                             }
-                            // Show children inline if expanded
-                            if (hasChildren && expanded) {
-                                childrenByParent[cat.id]?.forEach { child ->
-                                    ElevatedCard(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .padding(16.dp, 0.dp, 16.dp, 16.dp),
-                                        colors = CardDefaults.elevatedCardColors(
-                                            containerColor = MaterialTheme.colorScheme.surfaceVariant
-                                        )
+                        }
+                        // Show children inline if expanded
+                        if (hasChildren && expanded) {
+                            childrenByParent[cat.id]?.forEach { child ->
+                                ElevatedCard(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(16.dp, 0.dp, 16.dp, 16.dp),
+                                    colors = CardDefaults.elevatedCardColors(
+                                        containerColor = MaterialTheme.colorScheme.surfaceVariant
+                                    )
+                                ) {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth().padding(16.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.SpaceBetween
                                     ) {
-                                        Row(
-                                            modifier = Modifier.fillMaxWidth().padding(16.dp),
-                                            verticalAlignment = Alignment.CenterVertically,
-                                            horizontalArrangement = Arrangement.SpaceBetween
-                                        ) {
-                                            Column {
-                                                Text("└ ${child.name}", style = MaterialTheme.typography.titleMedium)
-                                                Text(kindLabel(child.kind), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                            }
-                                            if (!child.isDefault) {
-                                                IconButton(onClick = { onDelete(child) }) {
-                                                    Icon(Icons.Filled.DeleteOutline, contentDescription = "حذف")
-                                                }
+                                        Column {
+                                            Text("└ ${child.name}", style = MaterialTheme.typography.titleMedium)
+                                            Text(kindLabel(child.kind), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        }
+                                        if (!child.isDefault) {
+                                            IconButton(onClick = { onDelete(child) }) {
+                                                Icon(Icons.Filled.DeleteOutline, contentDescription = "حذف")
                                             }
                                         }
                                     }
@@ -145,6 +144,7 @@ private fun kindLabel(kind: CategoryKind): String = when (kind) {
     CategoryKind.DEBT_PAYMENT -> "پرداخت بدهی"
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun AddCategoryDialog(
     categories: List<Category>,
@@ -185,7 +185,7 @@ private fun AddCategoryDialog(
                         onExpandedChange = { showParentDropdown = it },
                         modifier = Modifier.fillMaxWidth()
                     ) {
-                        val selectedName = parentId?.let { categories.firstOrNull { it.id == it }?.name } ?: "بدون والد (دسته اصلی)"
+                        val selectedName = parentId?.let { pid -> categories.firstOrNull { it.id == pid }?.name } ?: "بدون والد (دسته اصلی)"
                         TextField(
                             value = selectedName,
                             onValueChange = {},
