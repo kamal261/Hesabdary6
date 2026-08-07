@@ -48,13 +48,13 @@ fun CategoriesScreen(
                 Icon(Icons.Filled.Add, contentDescription = "افزودن دسته")
             }
         }
-    } { padding ->
-            LazyColumn(
-                modifier = Modifier.padding(padding).fillMaxSize(),
-                contentPadding = PaddingValues(16.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                items(topLevelCategories) { cat ->
+    ) { padding ->
+        LazyColumn(
+            modifier = Modifier.padding(padding).fillMaxSize(),
+            contentPadding = PaddingValues(16.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            items(topLevelCategories) { cat ->
                 val hasChildren = childrenByParent[cat.id]?.isNotEmpty() == true
                 var expanded by remember { mutableStateOf(false) }
 
