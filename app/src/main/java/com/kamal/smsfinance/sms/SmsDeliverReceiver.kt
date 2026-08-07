@@ -64,7 +64,7 @@ class SmsDeliverReceiver : BroadcastReceiver() {
                     accountTail = parsed.accountTail
                 )
                 // Use the app's repository (via Application context)
-                (context.applicationContext as? SmsFinanceApp)?.transactionRepository?.insert(transaction)
+            (context.applicationContext as? SmsFinanceApp)?.repository?.insert(transaction)
             }
             is SmsParseResult.Unidentified, SmsParseResult.Ignored -> {
                 // Do nothing - Unidentified goes to separate table, Ignored is discarded
