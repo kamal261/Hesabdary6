@@ -19,6 +19,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.layout.padding
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -59,15 +60,7 @@ class MainActivity : ComponentActivity() {
 
             SmsFinanceTheme(darkTheme = darkTheme) {
                 Surface(modifier = Modifier, color = MaterialTheme.colorScheme.background) {
-                    SmsPermissionGate(onGranted = {
-                        viewModel.maybeShowFirstScanDialog { days ->
-                            firstScanDialogDays = days
-                            showFirstScanDialog = true
-                        }
-                        if (!showFirstScanDialog) {
-                            viewModel.scanInbox()
-                        }
-                    }) {
+                    SmsPermissionGate(onGranted = { viewModel.scanInbox() }) {
                         AppRoot(viewModel)
                     }
                 }
@@ -101,8 +94,6 @@ private fun AppRoot(viewModel: TransactionViewModel) {
     var tab by remember { mutableStateOf(Tab.LIST) }
     var overlay by remember { mutableStateOf<Overlay?>(null) }
     var driveAccountEmail by remember { mutableStateOf(viewModel.driveSignedInAccount()?.email) }
-    var showFirstScanDialog by remember { mutableStateOf(false) }
-    var firstScanDialogDays by remember { mutableStateOf(30) }
 
     val snackbarHostState = remember { SnackbarHostState() }
     val context = LocalContext.current
@@ -146,6 +137,27 @@ private fun AppRoot(viewModel: TransactionViewModel) {
             },
             dismissButton = {
                 TextButton(onClick = { viewModel.cancelPendingRestore() }) { Text("انصراف") }
+            }
+        )
+    }
+
+    // First-scan day-range dialog
+    var showFirstScanDialog by remember { mutableStateOf(false) }
+    var firstScanDialogDays by remember { mutableStateOf(30) }
+    if (!firstScanDone && !showFirstScanDialog) {
+        showFirstScanDialog = true
+    }
+    if (showFirstScanDialog && !firstScanDone) {
+        FirstScanDialog(
+            initialDays = firstScanDialogDays,
+            onConfirm = { days ->
+                firstScanDialogDays = days
+                viewModel.confirmFirstScan(days)
+                showFirstScanDialog = false
+            },
+            onSkip = {
+                viewModel.skipFirstScan()
+                showFirstScanDialog = false
             }
         )
     }
