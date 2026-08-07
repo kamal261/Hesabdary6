@@ -18,6 +18,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.foundation.layout.padding
 import com.kamal.smsfinance.permission.SmsPermissionGate
 import com.kamal.smsfinance.ui.TransactionViewModel
 import com.kamal.smsfinance.ui.screens.*
