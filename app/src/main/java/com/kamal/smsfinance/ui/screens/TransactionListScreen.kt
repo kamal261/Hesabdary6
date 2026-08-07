@@ -47,13 +47,16 @@ fun TransactionListScreen(
 ) {
     var query by remember { mutableStateOf("") }
     var onlyUncategorized by remember { mutableStateOf(false) }
+    var selectedBank by remember { mutableStateOf<String?>(null) }
     var detailFor by remember { mutableStateOf<Transaction?>(null) }
     var ruleSuggestionFor by remember { mutableStateOf<Pair<Transaction, Long>?>(null) }
 
-    val filtered = remember(transactions, query, onlyUncategorized) {
+    val banks = remember(transactions) { transactions.map { it.bankName }.distinct().sorted() }
+    val filtered = remember(transactions, query, onlyUncategorized, selectedBank) {
         transactions
             .filter { !onlyUncategorized || it.categoryId == null }
             .filter { query.isBlank() || it.description.contains(query, true) || it.bankName.contains(query, true) }
+            .filter { selectedBank == null || it.bankName == selectedBank }
     }
     val categoryById = remember(categories) { categories.associateBy { it.id } }
 
@@ -115,6 +118,35 @@ fun TransactionListScreen(
                             onClick = { onlyUncategorized = !onlyUncategorized },
                             label = { Text("فقط بدون دسته") }
                         )
+                    }
+                }
+
+                if (banks.isNotEmpty()) {
+                    item {
+                        Column(
+                            modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Text("فیلتر بانک:", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            FlowRow(
+                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                verticalArrangement = Arrangement.spacedBy(6.dp),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                FilterChip(
+                                    selected = selectedBank == null,
+                                    onClick = { selectedBank = null },
+                                    label = { Text("همه") }
+                                )
+                                banks.forEach { bank ->
+                                    FilterChip(
+                                        selected = selectedBank == bank,
+                                        onClick = { selectedBank = bank },
+                                        label = { Text(bank) }
+                                    )
+                                }
+                            }
+                        }
                     }
                 }
 

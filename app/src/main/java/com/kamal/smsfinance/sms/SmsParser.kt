@@ -97,25 +97,25 @@ object SmsParser {
 
     // Sender short-codes / names, per bank. These are the most common ones;
     // extend freely as new bank sender IDs are observed on-device.
-    private val BANK_SENDERS = mapOf(
-        "ملت" to listOf("Mellat", "MELLAT", "ملت", "10000210", "10000211"),
-        "سپه" to listOf("Sepah", "SEPAH", "سپه", "10009999", "10000155"),
-        "پاسارگاد" to listOf("Pasargad", "PASARGAD", "پاسارگاد", "10000068", "500068"),
-        "سامان" to listOf("Saman", "SAMAN", "سامان", "10000770", "10005010"),
-        "ملی" to listOf("BMI", "10000019", "ملی ایران", "بانک ملی"),
-        "تجارت" to listOf("Tejarat", "10000017", "تجارت"),
-        "صادرات" to listOf("Saderat", "10000019", "صادرات"),
-        "کشاورزی" to listOf("Keshavarzi", "10000160", "کشاورزی"),
-        "رفاه" to listOf("Refah", "10000144", "رفاه کارگران"),
-        "اقتصاد نوین" to listOf("EN Bank", "10000079", "اقتصادنوین"),
-        "پارسیان" to listOf("Parsian", "10000622", "پارسیان"),
-        "آینده" to listOf("Ayandeh", "10008485", "آینده"),
-        "شهر" to listOf("City Bank", "10004555", "بانک شهر"),
-        "دی" to listOf("Day Bank", "10009898", "بانک دی"),
-        "کارآفرین" to listOf("Karafarin", "10008717", "کارآفرین"),
-        "مسکن" to listOf("Maskan", "10000129", "مسکن"),
-        "رسالت" to listOf("Resalat", "رسالت", "قرض الحسنه رسالت"),
-        "بلو" to listOf("Blu", "BLU", "بلو", "بلوبانک")
+        private val BANK_SENDERS = mapOf(
+            "ملت" to listOf("Mellat", "MELLAT", "ملت", "10000210", "10000211"),
+            "سپه" to listOf("Sepah", "SEPAH", "سپه", "10009999", "10000155"),
+            "پاسارگاد" to listOf("Pasargad", "PASARGAD", "پاسارگاد", "10000068", "500068"),
+            "سامان" to listOf("Saman", "SAMAN", "سامان", "10000770", "10005010"),
+            "ملی" to listOf("BMI", "10000019", "ملی ایران", "بانک ملی"),
+            "تجارت" to listOf("Tejarat", "10000017", "تجارت"),
+            "صادرات" to listOf("Saderat", "10000019", "صادرات"),
+            "کشاورزی" to listOf("Keshavarzi", "10000160", "کشاورزی"),
+            "رفاه" to listOf("Refah", "10000144", "رفاه کارگران"),
+            "اقتصاد نوین" to listOf("EN Bank", "10000079", "اقتصادنوین"),
+            "پارسیان" to listOf("Parsian", "10000622", "پارسیان"),
+            "آینده" to listOf("Ayandeh", "10008485", "آینده"),
+            "شهر" to listOf("City Bank", "10004555", "بانک شهر"),
+            "دی" to listOf("Day Bank", "10009898", "بانک دی"),
+            "کارآفرین" to listOf("Karafarin", "10008717", "کارآفرین"),
+            "مسکن" to listOf("Maskan", "10000129", "مسکن"),
+            "رسالت" to listOf("Resalat", "رسالت", "قرض الحسنه رسالت"),
+            "بلو" to listOf("Blu", "BLU", "بلو", "بلوبانک")
     )
 
     // Keyword -> transaction type. Order matters: more specific phrases first.
@@ -198,6 +198,22 @@ object SmsParser {
 
     fun parse(sender: String, body: String, timestamp: Long): SmsParseResult {
         if (body.isBlank()) return SmsParseResult.Ignored
+
+        // Early filter: Iranian personal mobile numbers should never be parsed as transactions.
+        // All Iranian mobile numbers start with 09 (090-099) covering all operators:
+        // Hamrah-e Aval (0910-0919, 0990-0994), Irancell (0900-0905, 0930, 0935-0939),
+        // RighTel (0920-0922), Espadan (0931), MobinNet (0930), Shatel (0932-0933),
+        // SamanTel (0935), PH.Lotus (0936), ApTel (0937), Avacell (0938), Zi-Tel (0939),
+        // Arian-Tel (0940), Wenex (0941), and future allocations.
+        // Also handle international format: +989, 00989
+        val normalizedSender = sender.replace(" ", "").replace("-", "")
+        val strippedSender = normalizedSender
+            .removePrefix("+98")
+            .removePrefix("0098")
+        if (strippedSender.startsWith("09")) {
+            return SmsParseResult.Ignored
+        }
+
         if (IGNORE_KEYWORDS.any { body.contains(it) }) return SmsParseResult.Ignored
 
         val isKnownBank = isKnownBankSender(sender)
