@@ -200,11 +200,8 @@ object SmsParser {
         if (body.isBlank()) return SmsParseResult.Ignored
 
         // ── HARD GATES ──
-        // 1. Must have date AND time (Persian digits allowed, separators / - . :)
-        val DATETIME_REGEX = Regex("""[۰-۹0-9]{4}[/.\-][۰-۹0-9]{2}[/.\-][۰-۹0-9]{2}\s+[۰-۹0-9]{2}:[۰-۹0-9]{2}(:[۰-۹0-9]{2})?""")
-        if (!DATETIME_REGEX.containsMatchIn(body)) return SmsParseResult.Ignored
-
-        // 2. Must NOT be from personal Iranian mobile (09xx after normalizing +98/0098)
+        // 1. Must NOT be from personal Iranian mobile (09xx after normalizing +98/0098)
+        //    This is the strongest negative signal - personal numbers never send bank transactions
         val normalizedSender = sender.replace(" ", "").replace("-", "")
         val strippedSender = normalizedSender
             .removePrefix("+98")
@@ -215,14 +212,25 @@ object SmsParser {
         }
         if (isPersonalMobile && !isKnownBankShortCode) return SmsParseResult.Ignored
 
-        // 3. Must have TWO amounts: transaction amount + balance (مانده/موجودی)
-        // This is the definitive signature of a real Iranian bank SMS
+        // 2. Must have balance line (مانده/موجودی + number) - definitive signature of real bank SMS
+        //    Promotional/spam/OTP messages essentially never report an account balance
         if (!BALANCE_LINE_REGEX.containsMatchIn(body)) return SmsParseResult.Ignored
 
-        val hasTransactionAmount = AMOUNT_REGEX.containsMatchIn(body) || BARE_AMOUNT_REGEX.containsMatchIn(body)
-        if (!hasTransactionAmount) return SmsParseResult.Ignored
+        // 3. Must have SOME amount signal (transaction amount)
+        //    Accepts: explicit currency (تومان/ریال), bare "مبلغ N", or signed number (+N/-N) anchored by balance line
+        val hasExplicitAmount = AMOUNT_REGEX.containsMatchIn(body)
+        val hasBareAmount = BARE_AMOUNT_REGEX.containsMatchIn(body)
+        val hasSignedAmountWithBalance = BALANCE_LINE_REGEX.containsMatchIn(body) && SIGNED_AMOUNT_REGEX.containsMatchIn(body)
+        if (!hasExplicitAmount && !hasBareAmount && !hasSignedAmountWithBalance) return SmsParseResult.Ignored
 
-        // ── SOFT PARSE (only reached if all 4 gates passed) ──
+        // 4. Date/Time - OPTIONAL but if present must be valid (flexible formats across banks)
+        //    Some banks: full 1403/05/21 14:32:15, some: 05/06_12:44, some: multi-line
+        //    We don't hard-reject on missing date/time anymore - balance+amount is strong enough
+        //    But if date/time-like pattern exists, validate it doesn't look like garbage
+        val DATETIME_REGEX = Regex("""[۰-۹0-9]{2,4}[/.\-_][۰-۹0-9]{2}[/.\-_][۰-۹0-9]{2,4}[\s_\n]+[۰-۹0-9]{2}:[۰-۹0-9]{2}(:[۰-۹0-9]{2})?""")
+        val hasValidDateTime = DATETIME_REGEX.containsMatchIn(body)
+
+        // ── SOFT PARSE (only reached if core gates passed) ──
         if (IGNORE_KEYWORDS.any { body.contains(it) }) return SmsParseResult.Ignored
 
         val isKnownBank = isKnownBankSender(sender)
@@ -252,8 +260,9 @@ object SmsParser {
             )
         }
 
-        // Passed all 4 gates but couldn't fully parse → bank-related enough for review
-        val looksBankRelated = type != null || isKnownBank
+        // Passed core gates (sender + balance + amount) but couldn't fully parse
+        // → bank-related enough for review (Unidentified)
+        val looksBankRelated = type != null || isKnownBank || hasValidDateTime
         return if (looksBankRelated) SmsParseResult.Unidentified(sender, body, timestamp) else SmsParseResult.Ignored
     }
 
