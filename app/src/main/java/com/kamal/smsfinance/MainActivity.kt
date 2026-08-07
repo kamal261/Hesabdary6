@@ -240,8 +240,8 @@ private fun AppRoot(viewModel: TransactionViewModel) {
                 )
             }
         }
-    ) { padding ->
-        androidx.compose.foundation.layout.Box(modifier = Modifier.padding(padding)) {
+    ) { contentPadding ->
+        androidx.compose.foundation.layout.Box(modifier = Modifier.padding(contentPadding)) {
             when (tab) {
                 Tab.LIST -> {
                     val (owedToMe, iOwe) = viewModel.counterpartyBalanceSummary(transactions)
