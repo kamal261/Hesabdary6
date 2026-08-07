@@ -199,15 +199,12 @@ object SmsParser {
     fun parse(sender: String, body: String, timestamp: Long): SmsParseResult {
         if (body.isBlank()) return SmsParseResult.Ignored
 
-        // Early filter: Iranian personal mobile numbers should never be parsed as transactions.
-        // All Iranian mobile numbers start with 09 (090-099) covering all operators:
-        // Hamrah-e Aval (0910-0919, 0990-0994), Irancell (0900-0905, 0930, 0935-0939),
-        // RighTel (0920-0922), Espadan (0931), MobinNet (0930), Shatel (0932-0933),
-        // SamanTel (0935), PH.Lotus (0936), ApTel (0937), Avacell (0938), Zi-Tel (0939),
-        // Arian-Tel (0940), Wenex (0941), and future allocations.
-        // Also handle international format: +989, 00989
-        // EXCEPTION: Some bank short-codes also start with 09 (e.g., Blu Bank uses 0999).
-        // These are whitelisted so they aren't filtered out.
+        // ── HARD GATES ──
+        // 1. Must have date AND time (Persian digits allowed, separators / - . :)
+        val DATETIME_REGEX = Regex("""[۰-۹0-9]{4}[/.\-][۰-۹0-9]{2}[/.\-][۰-۹0-9]{2}\s+[۰-۹0-9]{2}:[۰-۹0-9]{2}(:[۰-۹0-9]{2})?""")
+        if (!DATETIME_REGEX.containsMatchIn(body)) return SmsParseResult.Ignored
+
+        // 2. Must NOT be from personal Iranian mobile (09xx after normalizing +98/0098)
         val normalizedSender = sender.replace(" ", "").replace("-", "")
         val strippedSender = normalizedSender
             .removePrefix("+98")
@@ -216,10 +213,15 @@ object SmsParser {
         val isKnownBankShortCode = BANK_SENDERS.values.flatten().any { code ->
             code.length >= 4 && strippedSender.contains(code)
         }
-        if (isPersonalMobile && !isKnownBankShortCode) {
-            return SmsParseResult.Ignored
-        }
+        if (isPersonalMobile && !isKnownBankShortCode) return SmsParseResult.Ignored
 
+        // 3. Must have an amount (with تومان/ریال unit, or bare number next to currency word)
+        val AMOUNT_REGEX = Regex("""([\d۰-۹][\d۰-۹,٬./]*)\s*(تومان|ریال|ريال|Rials?|Toman)""", RegexOption.IGNORE_CASE)
+        val BARE_AMOUNT_REGEX = Regex("""مبلغ[:\\s]*([\d۰-۹][\d۰-۹,٬]*)""")
+        val hasAmount = AMOUNT_REGEX.containsMatchIn(body) || BARE_AMOUNT_REGEX.containsMatchIn(body)
+        if (!hasAmount) return SmsParseResult.Ignored
+
+        // ── SOFT PARSE (only reached if all 3 gates passed) ──
         if (IGNORE_KEYWORDS.any { body.contains(it) }) return SmsParseResult.Ignored
 
         val isKnownBank = isKnownBankSender(sender)
@@ -249,11 +251,7 @@ object SmsParser {
             )
         }
 
-        // Couldn't fully parse. Only worth flagging for review if there was
-        // *some* bank-like signal -- a type keyword matched (amount just
-        // failed to extract), or the sender is a known bank short-code.
-        // Otherwise this is ordinary non-bank text and is safely ignored,
-        // so the review list doesn't fill up with unrelated personal SMS.
+        // Couldn't fully parse but passed all 3 gates → bank-related enough for review
         val looksBankRelated = type != null || isKnownBank
         return if (looksBankRelated) SmsParseResult.Unidentified(sender, body, timestamp) else SmsParseResult.Ignored
     }
