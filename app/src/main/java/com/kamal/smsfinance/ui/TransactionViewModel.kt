@@ -132,12 +132,10 @@ class TransactionViewModel(application: Application) : AndroidViewModel(applicat
 
     /** Call this on first launch if user hasn't done initial scan yet. Shows a dialog to pick day range. */
     fun maybeShowFirstScanDialog(onShowDialog: (Int) -> Unit) {
-        viewModelScope.launch {
-            val done = settings.firstScanDone.first()
-            if (!done) {
-                val days = settings.scanDaysBack.first()
-                onShowDialog(days)
-            }
+        val done = firstScanDone.value
+        if (!done) {
+            val days = scanDaysBack.value
+            onShowDialog(days)
         }
     }
 

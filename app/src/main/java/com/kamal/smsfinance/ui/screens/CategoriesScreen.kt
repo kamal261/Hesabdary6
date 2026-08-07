@@ -2,13 +2,13 @@ package com.kamal.smsfinance.ui.screens
 
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material3.*
-import androidx.compose.material3.tokens.ButtonDefaults
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -48,13 +48,13 @@ fun CategoriesScreen(
                 Icon(Icons.Filled.Add, contentDescription = "افزودن دسته")
             }
         }
-    ) { padding ->
-        LazyColumn(
-            modifier = Modifier.padding(padding).fillMaxSize(),
-            contentPadding = PaddingValues(16.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            items(topLevelCategories, key = { it.id }) { cat ->
+    } { padding ->
+            LazyColumn(
+                modifier = Modifier.padding(padding).fillMaxSize(),
+                contentPadding = PaddingValues(16.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                items(topLevelCategories) { cat ->
                 val hasChildren = childrenByParent[cat.id]?.isNotEmpty() == true
                 var expanded by remember { mutableStateOf(false) }
 
@@ -144,7 +144,6 @@ private fun kindLabel(kind: CategoryKind): String = when (kind) {
     CategoryKind.DEBT_PAYMENT -> "پرداخت بدهی"
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun AddCategoryDialog(
     categories: List<Category>,
