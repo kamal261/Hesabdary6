@@ -115,7 +115,7 @@ object SmsParser {
             "کارآفرین" to listOf("Karafarin", "10008717", "کارآفرین"),
             "مسکن" to listOf("Maskan", "10000129", "مسکن"),
             "رسالت" to listOf("Resalat", "رسالت", "قرض الحسنه رسالت"),
-            "بلو" to listOf("Blu", "BLU", "بلو", "بلوبانک")
+            "بلو" to listOf("Blu", "BLU", "بلو", "بلوبانک", "0999")
     )
 
     // Keyword -> transaction type. Order matters: more specific phrases first.
@@ -206,11 +206,17 @@ object SmsParser {
         // SamanTel (0935), PH.Lotus (0936), ApTel (0937), Avacell (0938), Zi-Tel (0939),
         // Arian-Tel (0940), Wenex (0941), and future allocations.
         // Also handle international format: +989, 00989
+        // EXCEPTION: Some bank short-codes also start with 09 (e.g., Blu Bank uses 0999).
+        // These are whitelisted so they aren't filtered out.
         val normalizedSender = sender.replace(" ", "").replace("-", "")
         val strippedSender = normalizedSender
             .removePrefix("+98")
             .removePrefix("0098")
-        if (strippedSender.startsWith("09")) {
+        val isPersonalMobile = strippedSender.startsWith("09")
+        val isKnownBankShortCode = BANK_SENDERS.values.flatten().any { code ->
+            code.length >= 4 && strippedSender.contains(code)
+        }
+        if (isPersonalMobile && !isKnownBankShortCode) {
             return SmsParseResult.Ignored
         }
 
