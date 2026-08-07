@@ -4,6 +4,9 @@ package com.kamal.smsfinance
 import android.content.Intent
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.OnBackPressedCallback
+import androidx.activity.OnBackPressedDispatcher
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
@@ -72,6 +75,9 @@ class MainActivity : ComponentActivity() {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun AppRoot(viewModel: TransactionViewModel) {
+    val backHandler = LocalContext.current as androidx.activity.ComponentActivity
+    val onBackPressedDispatcher = backHandler.onBackPressedDispatcher
+
     val transactions by viewModel.allTransactions.collectAsState()
     val categories by viewModel.allCategories.collectAsState()
     val counterparties by viewModel.allCounterparties.collectAsState()
@@ -94,6 +100,17 @@ private fun AppRoot(viewModel: TransactionViewModel) {
     var tab by remember { mutableStateOf(Tab.LIST) }
     var overlay by remember { mutableStateOf<Overlay?>(null) }
     var driveAccountEmail by remember { mutableStateOf(viewModel.driveSignedInAccount()?.email) }
+
+    // Back navigation: close overlay first, then navigate tabs, then exit app
+    BackHandler(enabled = true) {
+        if (overlay != null) {
+            overlay = null
+        } else if (tab != Tab.LIST) {
+            tab = Tab.LIST
+        } else {
+            onBackPressedDispatcher.onBackPressed()
+        }
+    }
 
     val snackbarHostState = remember { SnackbarHostState() }
     val context = LocalContext.current
