@@ -144,6 +144,7 @@ private fun kindLabel(kind: CategoryKind): String = when (kind) {
     CategoryKind.DEBT_PAYMENT -> "پرداخت بدهی"
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun AddCategoryDialog(
     categories: List<Category>,
