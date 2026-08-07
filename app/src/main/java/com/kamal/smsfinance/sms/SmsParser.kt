@@ -97,25 +97,25 @@ object SmsParser {
 
     // Sender short-codes / names, per bank. These are the most common ones;
     // extend freely as new bank sender IDs are observed on-device.
-        private val BANK_SENDERS = mapOf(
-            "ملت" to listOf("Mellat", "MELLAT", "ملت", "10000210", "10000211"),
-            "سپه" to listOf("Sepah", "SEPAH", "سپه", "10009999", "10000155"),
-            "پاسارگاد" to listOf("Pasargad", "PASARGAD", "پاسارگاد", "10000068", "500068"),
-            "سامان" to listOf("Saman", "SAMAN", "سامان", "10000770", "10005010"),
-            "ملی" to listOf("BMI", "10000019", "ملی ایران", "بانک ملی"),
-            "تجارت" to listOf("Tejarat", "10000017", "تجارت"),
-            "صادرات" to listOf("Saderat", "10000019", "صادرات"),
-            "کشاورزی" to listOf("Keshavarzi", "10000160", "کشاورزی"),
-            "رفاه" to listOf("Refah", "10000144", "رفاه کارگران"),
-            "اقتصاد نوین" to listOf("EN Bank", "10000079", "اقتصادنوین"),
-            "پارسیان" to listOf("Parsian", "10000622", "پارسیان"),
-            "آینده" to listOf("Ayandeh", "10008485", "آینده"),
-            "شهر" to listOf("City Bank", "10004555", "بانک شهر"),
-            "دی" to listOf("Day Bank", "10009898", "بانک دی"),
-            "کارآفرین" to listOf("Karafarin", "10008717", "کارآفرین"),
-            "مسکن" to listOf("Maskan", "10000129", "مسکن"),
-            "رسالت" to listOf("Resalat", "رسالت", "قرض الحسنه رسالت"),
-            "بلو" to listOf("Blu", "BLU", "بلو", "بلوبانک", "0999")
+    private val BANK_SENDERS = mapOf(
+        "ملت" to listOf("Mellat", "MELLAT", "ملت", "10000210", "10000211"),
+        "سپه" to listOf("Sepah", "SEPAH", "سپه", "10009999", "10000155"),
+        "پاسارگاد" to listOf("Pasargad", "PASARGAD", "پاسارگاد", "10000068", "500068"),
+        "سامان" to listOf("Saman", "SAMAN", "سامان", "10000770", "10005010"),
+        "ملی" to listOf("BMI", "10000019", "ملی ایران", "بانک ملی"),
+        "تجارت" to listOf("Tejarat", "10000017", "تجارت"),
+        "صادرات" to listOf("Saderat", "10000019", "صادرات"),
+        "کشاورزی" to listOf("Keshavarzi", "10000160", "کشاورزی"),
+        "رفاه" to listOf("Refah", "10000144", "رفاه کارگران"),
+        "اقتصاد نوین" to listOf("EN Bank", "10000079", "اقتصادنوین"),
+        "پارسیان" to listOf("Parsian", "10000622", "پارسیان"),
+        "آینده" to listOf("Ayandeh", "10008485", "آینده"),
+        "شهر" to listOf("City Bank", "10004555", "بانک شهر"),
+        "دی" to listOf("Day Bank", "10009898", "بانک دی"),
+        "کارآفرین" to listOf("Karafarin", "10008717", "کارآفرین"),
+        "مسکن" to listOf("Maskan", "10000129", "مسکن"),
+        "رسالت" to listOf("Resalat", "رسالت", "قرض الحسنه رسالت"),
+        "بلو" to listOf("Blu", "BLU", "بلو", "بلوبانک", "0999")
     )
 
     // Keyword -> transaction type. Order matters: more specific phrases first.
@@ -179,7 +179,7 @@ object SmsParser {
 
     // Fallback: a bare number of 5+ digits immediately followed by common
     // currency-less bank phrasing ("مبلغ 500000 از").
-    private val BARE_AMOUNT_REGEX = Regex("""مبلغ[:\s]*([\d۰-۹][\d۰-۹,٬]*)""")
+    private val BARE_AMOUNT_REGEX = Regex("""مبلغ[:\\s]*([\d۰-۹][\d۰-۹,٬]*)""")
 
     // Final fallback for terse, keyword-less, unit-less ledger lines (e.g.
     // Resalat Bank: "-2,260,000"). A leading sign right before the digits is
@@ -191,7 +191,7 @@ object SmsParser {
     // digits but essentially never report a balance line -- this anchor is
     // what keeps the fallback from misfiring on non-bank SMS.
     private val SIGNED_AMOUNT_REGEX = Regex("""([+\-])\s*([\d۰-۹][\d۰-۹,٬]*)""")
-    private val BALANCE_LINE_REGEX = Regex("""(مانده|موجودی)[:\s]*[\d۰-۹][\d۰-۹,٬]*""")
+    private val BALANCE_LINE_REGEX = Regex("""(مانده|موجودی)[:\\s]*[\d۰-۹][\d۰-۹,٬]*""")
 
     // Card/account tail, e.g. "...1234" or "حساب ****1234"
     private val TAIL_REGEX = Regex("""[*x]{2,}(\d{4})""")
@@ -215,13 +215,14 @@ object SmsParser {
         }
         if (isPersonalMobile && !isKnownBankShortCode) return SmsParseResult.Ignored
 
-        // 3. Must have an amount (with تومان/ریال unit, or bare number next to currency word)
-        val AMOUNT_REGEX = Regex("""([\d۰-۹][\d۰-۹,٬./]*)\s*(تومان|ریال|ريال|Rials?|Toman)""", RegexOption.IGNORE_CASE)
-        val BARE_AMOUNT_REGEX = Regex("""مبلغ[:\\s]*([\d۰-۹][\d۰-۹,٬]*)""")
-        val hasAmount = AMOUNT_REGEX.containsMatchIn(body) || BARE_AMOUNT_REGEX.containsMatchIn(body)
-        if (!hasAmount) return SmsParseResult.Ignored
+        // 3. Must have TWO amounts: transaction amount + balance (مانده/موجودی)
+        // This is the definitive signature of a real Iranian bank SMS
+        if (!BALANCE_LINE_REGEX.containsMatchIn(body)) return SmsParseResult.Ignored
 
-        // ── SOFT PARSE (only reached if all 3 gates passed) ──
+        val hasTransactionAmount = AMOUNT_REGEX.containsMatchIn(body) || BARE_AMOUNT_REGEX.containsMatchIn(body)
+        if (!hasTransactionAmount) return SmsParseResult.Ignored
+
+        // ── SOFT PARSE (only reached if all 4 gates passed) ──
         if (IGNORE_KEYWORDS.any { body.contains(it) }) return SmsParseResult.Ignored
 
         val isKnownBank = isKnownBankSender(sender)
@@ -251,7 +252,7 @@ object SmsParser {
             )
         }
 
-        // Couldn't fully parse but passed all 3 gates → bank-related enough for review
+        // Passed all 4 gates but couldn't fully parse → bank-related enough for review
         val looksBankRelated = type != null || isKnownBank
         return if (looksBankRelated) SmsParseResult.Unidentified(sender, body, timestamp) else SmsParseResult.Ignored
     }
