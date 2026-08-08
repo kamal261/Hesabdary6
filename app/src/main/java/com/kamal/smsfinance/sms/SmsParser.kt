@@ -3,18 +3,6 @@ package com.kamal.smsfinance.sms
 
 import com.kamal.smsfinance.data.TransactionType
 
-/** Intermediate result of parsing one SMS, before it becomes a Room Transaction. */
-data class ParsedSms(
-    val sender: String,
-    val amountToman: Long,
-    val type: TransactionType,
-    val bankName: String,
-    val description: String,
-    val timestamp: Long,
-    val rawSms: String,
-    val accountTail: String?
-)
-
 /**
  * Outcome of trying to parse one SMS.
  * - Recognized: a full transaction was extracted.
@@ -24,11 +12,11 @@ data class ParsedSms(
  * - Ignored: confidently not a transaction (blank, OTP/promo/balance-check,
  *   or ordinary non-bank text) -- never stored, never shown.
  */
-sealed class SmsParseResult {
-    data class Recognized(val parsed: ParsedSms) : SmsParseResult()
-    data class Unidentified(val sender: String, val body: String, val timestamp: Long) : SmsParseResult()
-    object Ignored : SmsParseResult()
-}
+// sealed class SmsParseResult {
+//     data class Recognized(val parsed: ParsedSms) : SmsParseResult()
+//     data class Unidentified(val sender: String, val body: String, val timestamp: Long) : SmsParseResult()
+//     object Ignored : SmsParseResult()
+// }
 
 /**
  * Parses Iranian bank SMS messages into structured transaction data.
