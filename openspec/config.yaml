@@ -1,0 +1,32 @@
+schema: spec-driven
+
+# Project context
+context: |
+  Tech stack: Kotlin, Android, Gradle (Kotlin DSL), Room, Jetpack Compose
+  Domain: Personal finance app parsing Iranian bank SMS
+  Key components: SmsParser, SmsDateExtractor, RuleEngine, RecurringDetector
+  Testing: JUnit5, GitHub Actions CI, 59 unit tests passing
+  Conventions: Persian/Farsi language, formal "شما", no API keys in code
+
+# Per-artifact rules
+rules:
+  proposal:
+    - Keep proposals under 500 words
+    - Always include a "Non-goals" section
+    - Reference existing specs if modifying
+  tasks:
+    - Break tasks into chunks of max 2 hours
+    - Each task must be verifiable (test passes, build succeeds)
+  spec:
+    - Write in English for technical terms, Persian for user-facing
+
+# Per-operation guidance
+operations:
+  apply:
+    guidance:
+      - Keep test summaries concise
+      - Run unit tests before marking task complete
+  archive:
+    guidance:
+      - Summarize the archive outcome before finishing
+      - Update main spec with implementation notes
