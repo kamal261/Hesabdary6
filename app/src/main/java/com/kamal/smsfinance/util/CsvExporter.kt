@@ -8,8 +8,13 @@ import com.kamal.smsfinance.data.TransactionSource
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 object CsvExporter {
+
+    private val dateFormat = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.US)
 
     /**
      * Writes transactions to a CSV file (Excel-compatible: UTF-8 BOM so
@@ -28,7 +33,7 @@ object CsvExporter {
                 out.bufferedWriter(Charsets.UTF_8).use { writer ->
                     writer.appendLine("تاریخ,بانک,نوع,مبلغ (تومان),توضیحات,منبع,تکراری")
                     for (t in transactions) {
-                        val date = JalaliDate.formatDateTime(t.date)
+                        val date = dateFormat.format(Date(t.date))
                         val type = if (t.type.name == "INCOME") "واریز" else "برداشت"
                         val source = when {
                             t.isIndirectSettlement -> "تسویه غیرمستقیم"

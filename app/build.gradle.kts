@@ -12,8 +12,8 @@ android {
         applicationId = "com.kamal.smsfinance"
         minSdk = 26
         targetSdk = 34
-        versionCode = 3
-        versionName = "0.0.3"
+        versionCode = 2
+        versionName = "1.0.1"
 
         vectorDrawables { useSupportLibrary = true }
     }
@@ -48,12 +48,6 @@ android {
     packaging {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
-        }
-    }
-
-    testOptions {
-        unitTests.all {
-            it.useJUnitPlatform()
         }
     }
 }
@@ -99,8 +93,6 @@ dependencies {
 
     // Testing
     testImplementation("junit:junit:4.13.2")
-    testImplementation("org.junit.jupiter:junit-jupiter:5.10.2")
-    testImplementation("org.jetbrains.kotlin:kotlin-test-junit5")
     androidTestImplementation("androidx.test.ext:junit:1.2.1")
     androidTestImplementation("androidx.test.espresso:espresso-core:3.6.1")
     androidTestImplementation(platform("androidx.compose:compose-bom:2024.06.00"))

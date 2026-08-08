@@ -22,7 +22,9 @@ import com.kamal.smsfinance.ui.components.CategoryPicker
 import com.kamal.smsfinance.ui.components.TodayDashboardCard
 import com.kamal.smsfinance.ui.theme.GreenIncome
 import com.kamal.smsfinance.ui.theme.RedExpense
-import com.kamal.smsfinance.util.JalaliDate
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -41,8 +43,7 @@ fun TransactionListScreen(
     onCreateRule: (pattern: String, categoryId: Long?) -> Unit,
     onOpenUnidentifiedSms: () -> Unit,
     onOpenChecks: () -> Unit,
-    onOpenCounterparties: () -> Unit,
-    onOpenSmsContext: (sender: String, timestamp: Long) -> Unit
+    onOpenCounterparties: () -> Unit
 ) {
     var query by remember { mutableStateOf("") }
     var onlyUncategorized by remember { mutableStateOf(false) }
@@ -142,13 +143,12 @@ fun TransactionListScreen(
             categories = categories,
             categoryUsageCounts = categoryUsageCounts,
             onDismiss = { detailFor = null },
-                        onSelectCategory = { categoryId ->
-                            onAssignCategory(txn, categoryId)
-                            detailFor = null
-                            if (categoryId != null) ruleSuggestionFor = txn to categoryId
-                        },
-                        onOpenSmsContext = { onOpenSmsContext(txn.smsSender ?: txn.bankName, txn.date) }
-                    )
+            onSelectCategory = { categoryId ->
+                onAssignCategory(txn, categoryId)
+                detailFor = null
+                if (categoryId != null) ruleSuggestionFor = txn to categoryId
+            }
+        )
     }
 
     ruleSuggestionFor?.let { (txn, categoryId) ->
@@ -249,13 +249,12 @@ private fun TransactionDetailDialog(
     categories: List<Category>,
     categoryUsageCounts: Map<Long, Int>,
     onDismiss: () -> Unit,
-    onSelectCategory: (Long?) -> Unit,
-    onOpenSmsContext: () -> Unit
+    onSelectCategory: (Long?) -> Unit
 ) {
     val isIncome = transaction.type == TransactionType.INCOME
     val amountColor = if (isIncome) GreenIncome else RedExpense
     val dateStr = remember(transaction.date) {
-        JalaliDate.formatDateTime(transaction.date)
+        SimpleDateFormat("yyyy/MM/dd - HH:mm:ss", Locale.US).format(Date(transaction.date))
     }
     val fullText = transaction.rawSms?.takeIf { it.isNotBlank() } ?: transaction.description
 
@@ -303,16 +302,6 @@ private fun TransactionDetailDialog(
                     transaction.accountTail?.let {
                         Text("چهار رقم آخر حساب: $it", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
-                }
-
-                Spacer(Modifier.height(8.dp))
-                OutlinedButton(
-                    onClick = onOpenSmsContext,
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Icon(Icons.Filled.Sms, contentDescription = null, modifier = Modifier.size(18.dp))
-                    Spacer(Modifier.width(8.dp))
-                    Text("مشاهده پیامک‌های این تراکنش (قبل/بعد)")
                 }
 
                 Spacer(Modifier.height(16.dp))
@@ -365,7 +354,7 @@ private fun TransactionCard(
     val isIncome = txn.type == TransactionType.INCOME
     val amountColor = if (isIncome) GreenIncome else RedExpense
     val dateStr = remember(txn.date) {
-        JalaliDate.formatDateTime(txn.date)
+        SimpleDateFormat("yyyy/MM/dd - HH:mm", Locale.US).format(Date(txn.date))
     }
 
     ElevatedCard(modifier = Modifier.fillMaxWidth().clickable(onClick = onClick)) {

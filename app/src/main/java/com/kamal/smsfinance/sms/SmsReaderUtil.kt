@@ -44,17 +44,4 @@ object SmsReaderUtil {
             }
         results
     }
-
-    /**
-     * Reads inbox SMS from one sender only, ascending by time, for the
-     * "SMS context" screen. Sender matching uses the last 8 characters
-     * (handles "+981000..." vs "1000..." vs "Mellat" variations).
-     */
-    suspend fun readInboxForSender(context: Context, sender: String): List<RawSms> =
-        withContext(Dispatchers.IO) {
-            val target = sender.takeLast(8)
-            readInbox(context)
-                .filter { it.sender.takeLast(8) == target }
-                .sortedBy { it.timestamp }
-        }
 }

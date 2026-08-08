@@ -1,173 +1,68 @@
-// SmsFinance file version: 3 — integrated TemplateEngine, BlocklistEngine, DedupEngine
-// Fixes from v2.1 critique:
-// 1. Fee/insurance transactions moved from Blocklist to SEMI_RICH Templates
-// 2. Blocklist/Template matching uses containsMatchIn (substring) not matches() (full string)
-// 3. Dedup uses SHA-256 truncated + sliding window instead of hashCode() + fixed bucket
-// 4. Reconciliation layer for balance verification (optional, flags mismatch)
-
+// SmsFinance file version: 2 — parse() now returns a sealed SmsParseResult (Recognized/Unidentified/Ignored) instead of a nullable ParsedSms, so bank-like messages that fail to parse are surfaced for review instead of silently dropped
 package com.kamal.smsfinance.sms
 
 import com.kamal.smsfinance.data.TransactionType
-import com.kamal.smsfinance.util.JalaliDate
 
-/**
- * Result of balance reconciliation check.
- */
-data class ReconciliationResult(
-    val isConsistent: Boolean,
-    val expectedBalance: Long?,
-    val actualBalance: Long?,
-    val delta: Long
+/** Intermediate result of parsing one SMS, before it becomes a Room Transaction. */
+data class ParsedSms(
+    val sender: String,
+    val amountToman: Long,
+    val type: TransactionType,
+    val bankName: String,
+    val description: String,
+    val timestamp: Long,
+    val rawSms: String,
+    val accountTail: String?
 )
 
 /**
- * Main SMS Parser - orchestrates BlocklistEngine, TemplateEngine, and fallback parsing.
+ * Outcome of trying to parse one SMS.
+ * - Recognized: a full transaction was extracted.
+ * - Unidentified: the message looked bank-related (known bank sender, or a
+ *   type keyword matched) but a full transaction couldn't be extracted --
+ *   kept for the user to review rather than silently dropped.
+ * - Ignored: confidently not a transaction (blank, OTP/promo/balance-check,
+ *   or ordinary non-bank text) -- never stored, never shown.
+ */
+sealed class SmsParseResult {
+    data class Recognized(val parsed: ParsedSms) : SmsParseResult()
+    data class Unidentified(val sender: String, val body: String, val timestamp: Long) : SmsParseResult()
+    object Ignored : SmsParseResult()
+}
+
+/**
+ * Parses Iranian bank SMS messages into structured transaction data.
+ *
+ * Coverage notes:
+ * - Type (expense/income) and amount are resolved first, from the message
+ *   body alone; bank identification is resolved last and is allowed to fall
+ *   back to "نامشخص" once the message already looks like a real transaction
+ *   (some banks, especially newer digital/micro-finance ones, don't always
+ *   match a known sender code or name).
+ * - Amount extraction supports "تومان" and "ریال" (auto-converted /10), with
+ *   or without thousands separators (٬ , or normal comma), both Persian and
+ *   Latin digits. Some banks (e.g. Resalat) send terse, unit-less ledger
+ *   lines like "-2,260,000" with no keyword or currency word at all --
+ *   Iranian core-banking systems are denominated in Rial internally, so an
+ *   unlabeled amount defaults to Rial (divided by 10), not Toman.
+ * - Type (expense/income) is inferred from a keyword table first; if no
+ *   keyword matches (same terse-SMS case), a leading "-"/"+" immediately
+ *   before the amount is used as a fallback signal -- but only when the
+ *   message also reports an account balance ("مانده:"/"موجودی:"), which
+ *   real bank ledger SMS almost always include and promotional/spam SMS
+ *   almost never do. This anchor prevents phone numbers, discount codes,
+ *   and price ranges (which also contain +/- next to digits) from being
+ *   misread as transactions.
+ * - Ambiguous or promotional messages ("تخفیف", "تبلیغ") are rejected
+ *   outright so they never get filed as false transactions.
+ * - A message that has *some* bank-like signal (known sender, or a type
+ *   keyword) but still can't be fully parsed is returned as Unidentified
+ *   instead of being dropped -- see SmsParseResult.
  */
 object SmsParser {
 
-    /** Tolerance for balance reconciliation (10,000 Tomans = ~0.30 USD) */
-    private const val RECONCILIATION_TOLERANCE = 10_000L
-
-    /**
-     * Parses an Iranian bank SMS message into structured transaction data.
-     * 
-     * Pipeline:
-     * 1. BlocklistEngine - hard reject OTP/promo/phishing (never stored)
-     * 2. TemplateEngine - match known formats (RICH/SEMI_RICH -> Recognized, OPAQUE -> Unidentified)
-     * 3. Fallback parser - generic bank-origin detection + amount/type extraction
-     * 4. Reconciliation - verify balance consistency, flag if mismatch
-     */
-    fun parse(sender: String, body: String, timestamp: Long): SmsParseResult {
-        if (body.isBlank()) return SmsParseResult.Ignored
-
-        // STEP 1: Blocklist - hard reject (ZERO GATE LEAKAGE)
-        if (BlocklistEngine.isBlocked(body)) {
-            return SmsParseResult.Ignored
-        }
-
-        // STEP 2: Template matching - known bank formats
-        val templateMatch = TemplateEngine.match(sender, body, timestamp)
-        when (templateMatch) {
-            is TemplateMatchResult.Matched -> {
-                val parsed = templateMatch.extracted
-                val reconciliation = reconcile(parsed)
-                
-                // If reconciliation fails, downgrade to Unidentified for user review
-                return if (reconciliation.isConsistent) {
-                    SmsParseResult.Recognized(parsed)
-                } else {
-                    SmsParseResult.Unidentified(sender, body, timestamp)
-                }
-            }
-            is TemplateMatchResult.NoMatch -> {
-                // Continue to fallback parsing
-            }
-        }
-
-        // STEP 3: Fallback parser (original SmsParser logic)
-        return parseFallback(sender, body, timestamp)
-    }
-
-    /**
-     * Fallback parser for messages not matching any template.
-     * Uses generic bank-origin signals and keyword-based type/amount extraction.
-     */
-    private fun parseFallback(sender: String, body: String, timestamp: Long): SmsParseResult {
-        // Hard reject promotional/OTP (already done by BlocklistEngine, but defense in depth)
-        if (looksPromotionalOrOtp(body)) return SmsParseResult.Ignored
-
-        val type = identifyType(body)
-        val amount = if (type != null) extractAmountToman(body) else null
-
-        if (type != null && amount != null && amount > 0 && isBankOriginated(sender, body)) {
-            val bank = identifyBank(sender, body) ?: "نامشخص"
-            val tail = TAIL_REGEX.find(body)?.groupValues?.get(1)?.takeLast(4)
-            val description = buildDescription(body, type)
-            val txnDate = SmsDateExtractor.extract(body, timestamp)
-            
-            val parsed = ParsedSms(
-                sender = sender,
-                amountToman = amount,
-                type = type,
-                bankName = bank,
-                description = description,
-                timestamp = txnDate,
-                rawSms = body,
-                accountTail = tail
-            )
-
-            val reconciliation = reconcile(parsed)
-            return if (reconciliation.isConsistent) {
-                SmsParseResult.Recognized(parsed)
-            } else {
-                SmsParseResult.Unidentified(sender, body, timestamp)
-            }
-        }
-
-        // Couldn't fully parse - flag for review only if some bank-like signal exists
-        val looksBankRelated = type != null || isKnownBankSender(sender)
-        return if (looksBankRelated) {
-            SmsParseResult.Unidentified(sender, body, timestamp)
-        } else {
-            SmsParseResult.Ignored
-        }
-    }
-
-    // ===== HELPER METHODS (from original SmsParser) =====
-
-    private val IGNORE_KEYWORDS = listOf(
-        "موجودی شما", "رمز یکبار مصرف", "کد تایید", "تخفیف", "جشنواره",
-        "تبلیغ", "کد فعال", "OTP"
-    )
-
-    private val PROMO_REJECT_KEYWORDS = listOf(
-        "تسهیلات", "قرض الحسنه", "ضامن", "قسط", "قرعه‌کشی", "جایزه",
-        "به ارزش", "اعتبار", "دریافت و ثبت", "برنده", "مشاوره",
-        "اسم کارت", "سهام عدالت", "ابلاغیه", "کد ملی", "به‌روزرسانی"
-    )
-
-    private val OTP_SIGNATURES = listOf(
-        "رمز پویا", "رمز یکبار مصرف", "کد تایید", "رمز تأیید",
-        "رمز اینترنتی", "کد فعال‌سازی", "OTP"
-    )
-
-    private val URL_REGEX = Regex("""https?://|www\.|t\.me/|bit\.ly/|\.ir/|\.com/""")
-
-    private val BALANCE_KEYWORD_REGEX = Regex("""(مانده|موجودی|مبلغ مانده|موجودی حساب)""")
-
-    private fun looksPromotionalOrOtp(body: String): Boolean {
-        if (URL_REGEX.containsMatchIn(body)) return true
-        if (OTP_SIGNATURES.any { body.contains(it) }) return true
-        if (PROMO_REJECT_KEYWORDS.any { body.contains(it) }) return true
-        return false
-    }
-
-    private val PERSIAN_DIGITS = "۰۱۲۳۴۵۶۷۸۹"
-
-    private val AMOUNT_REGEX = Regex(
-        """([\d۰-۹][\d۰-۹,٬،./]*)\s*(تومان|ریال|ريال|Rials?|Toman)""",
-        RegexOption.IGNORE_CASE
-    )
-
-    private val BARE_AMOUNT_REGEX = Regex("""مبلغ[:\\s]*([\d۰-۹][\d۰-۹,٬،]*)""")
-
-    private val SIGNED_AMOUNT_REGEX = Regex("""([+\-])\s*([\d۰-۹][\d۰-۹,٬]*)""")
-    private val BALANCE_LINE_REGEX = Regex("""(مانده|موجودی)[:\\s]*[\d۰-۹][\d۰-۹,٬]*""")
-
-    private val TAIL_REGEX = Regex("""([*x]{2,}\d{4})|(\d{6}\*\d{4})""")
-
-    private val BANK_DEBIT_PHRASES = listOf("از حساب شما پرید", "از حساب شما کسر", "از حساب شما برداشت")
-
-    private val TXN_ID_KEYWORDS = listOf("شناسه", "کد پیگیری", "شماره تراکنش", "پیگیری")
-
-    private val EXPENSE_KEYWORDS = listOf(
-        "پرداخت قسط", "خرید", "برداشت", "کارمزد", "هزینه", "پرداخت اینترنتی",
-        "پرداخت شد", "انتقال به", "کسر از", "چک", "قبض", "بیمه", "حق بیمه"
-    )
-    private val INCOME_KEYWORDS = listOf(
-        "واریز", "دریافت", "واریزی", "به حساب شما", "بازگشت وجه", "سود سپرده"
-    )
-
+    // Sender short-codes / names, per bank. These are the most common ones;
+    // extend freely as new bank sender IDs are observed on-device.
     private val BANK_SENDERS = mapOf(
         "ملت" to listOf("Mellat", "MELLAT", "ملت", "10000210", "10000211"),
         "سپه" to listOf("Sepah", "SEPAH", "سپه", "10009999", "10000155"),
@@ -189,6 +84,83 @@ object SmsParser {
         "بلو" to listOf("Blu", "BLU", "بلو", "بلوبانک")
     )
 
+    // Keyword -> transaction type. Order matters: more specific phrases first.
+    private val EXPENSE_KEYWORDS = listOf(
+        "پرداخت قسط", "خرید", "برداشت", "کارمزد", "هزینه", "پرداخت اینترنتی",
+        "پرداخت شد", "انتقال به", "کسر از", "چک", "قبض"
+    )
+    private val INCOME_KEYWORDS = listOf(
+        "واریز", "دریافت", "واریزی", "به حساب شما", "بازگشت وجه", "سود سپرده"
+    )
+
+    // Messages that only mention balance / OTP / promos, never a real txn.
+    private val IGNORE_KEYWORDS = listOf(
+        "موجودی شما", "رمز یکبار مصرف", "کد تایید", "تخفیف", "جشنواره",
+        "تبلیغ", "کد فعال", "OTP"
+    )
+
+    private val PERSIAN_DIGITS = "۰۱۲۳۴۵۶۷۸۹"
+
+    // Matches amounts like: "مبلغ: 500,000 تومان", "500000 ريال", "1,250,000ریال"
+    // Supports Persian thousands separator ٬ and plain , as well as Persian digits.
+    private val AMOUNT_REGEX = Regex(
+        """([\d۰-۹][\d۰-۹,٬./]*)\s*(تومان|ریال|ريال|Rials?|Toman)""",
+        RegexOption.IGNORE_CASE
+    )
+
+    // Fallback: a bare number of 5+ digits immediately followed by common
+    // currency-less bank phrasing ("مبلغ 500000 از").
+    private val BARE_AMOUNT_REGEX = Regex("""مبلغ[:\s]*([\d۰-۹][\d۰-۹,٬]*)""")
+
+    // Final fallback for terse, keyword-less, unit-less ledger lines (e.g.
+    // Resalat Bank: "-2,260,000"). A leading sign right before the digits is
+    // both the amount marker and the type signal for these messages -- but
+    // ONLY trusted when the message also reports an account balance
+    // ("مانده:"/"موجودی:" + a number), which is a strong, near-universal
+    // signature of genuine core-banking ledger SMS. Promotional text, phone
+    // numbers, discount codes, and price ranges also contain +/- next to
+    // digits but essentially never report a balance line -- this anchor is
+    // what keeps the fallback from misfiring on non-bank SMS.
+    private val SIGNED_AMOUNT_REGEX = Regex("""([+\-])\s*([\d۰-۹][\d۰-۹,٬]*)""")
+    private val BALANCE_LINE_REGEX = Regex("""(مانده|موجودی)[:\s]*[\d۰-۹][\d۰-۹,٬]*""")
+
+    // Card/account tail, e.g. "...1234" or "حساب ****1234"
+    private val TAIL_REGEX = Regex("""[*x]{2,}(\d{4})""")
+
+    fun parse(sender: String, body: String, timestamp: Long): SmsParseResult {
+        if (body.isBlank()) return SmsParseResult.Ignored
+        if (IGNORE_KEYWORDS.any { body.contains(it) }) return SmsParseResult.Ignored
+
+        val type = identifyType(body)
+        val amount = if (type != null) extractAmountToman(body) else null
+
+        if (type != null && amount != null && amount > 0) {
+            val bank = identifyBank(sender, body) ?: "نامشخص"
+            val tail = TAIL_REGEX.find(body)?.groupValues?.get(1)
+            val description = buildDescription(body, type)
+            return SmsParseResult.Recognized(
+                ParsedSms(
+                    sender = sender,
+                    amountToman = amount,
+                    type = type,
+                    bankName = bank,
+                    description = description,
+                    timestamp = timestamp,
+                    rawSms = body,
+                    accountTail = tail
+                )
+            )
+        }
+
+        // Couldn't fully parse. Only worth flagging for review if there was
+        // *some* bank-like signal -- a type keyword matched (amount just
+        // failed to extract), or the sender is a known bank short-code.
+        // Otherwise this is ordinary non-bank text and is safely ignored,
+        // so the review list doesn't fill up with unrelated personal SMS.
+        val looksBankRelated = type != null || isKnownBankSender(sender)
+        return if (looksBankRelated) SmsParseResult.Unidentified(sender, body, timestamp) else SmsParseResult.Ignored
+    }
+
     private fun isKnownBankSender(sender: String): Boolean =
         BANK_SENDERS.values.any { identifiers -> identifiers.any { sender.contains(it, ignoreCase = true) } }
 
@@ -196,25 +168,11 @@ object SmsParser {
         for ((bankName, identifiers) in BANK_SENDERS) {
             if (identifiers.any { sender.contains(it, ignoreCase = true) }) return bankName
         }
+        // Fall back to scanning the body text itself for a bank name mention.
         for ((bankName, identifiers) in BANK_SENDERS) {
-            if (identifiers.any { id ->
-                    id.length >= 3 && (body.contains("$id ") || body.contains("$id\n") || body.contains("$id،"))
-                }) return bankName
+            if (identifiers.any { it.length > 3 && body.contains(it, ignoreCase = true) }) return bankName
         }
         return null
-    }
-
-    private fun isBankOriginated(sender: String, body: String): Boolean {
-        if (isKnownBankSender(sender)) return true
-        if (BANK_SENDERS.values.any { ids ->
-                ids.any { id ->
-                    id.length >= 3 && (body.contains("$id ") || body.contains("$id\n") || body.contains("$id،"))
-                }
-            }) return true
-        if (BALANCE_LINE_REGEX.containsMatchIn(body)) return true
-        if (BANK_DEBIT_PHRASES.any { body.contains(it) }) return true
-        if (TAIL_REGEX.containsMatchIn(body)) return true
-        return TXN_ID_KEYWORDS.any { body.contains(it) } && BALANCE_KEYWORD_REGEX.containsMatchIn(body)
     }
 
     private fun identifyType(body: String): TransactionType? {
@@ -223,12 +181,19 @@ object SmsParser {
         return when {
             hasIncome && !hasExpense -> TransactionType.INCOME
             hasExpense && !hasIncome -> TransactionType.EXPENSE
+            // Both matched (e.g. "کارمزد" inside a deposit message) -- prefer
+            // whichever keyword appears first in the text, it's usually the
+            // primary action.
             hasExpense && hasIncome -> {
                 val expenseIdx = EXPENSE_KEYWORDS.minOf { kw -> body.indexOf(kw).let { if (it < 0) Int.MAX_VALUE else it } }
                 val incomeIdx = INCOME_KEYWORDS.minOf { kw -> body.indexOf(kw).let { if (it < 0) Int.MAX_VALUE else it } }
                 if (expenseIdx <= incomeIdx) TransactionType.EXPENSE else TransactionType.INCOME
             }
-            BANK_DEBIT_PHRASES.any { body.contains(it) } -> TransactionType.EXPENSE
+            // No keyword at all -- terse ledger-style SMS (e.g. Resalat Bank).
+            // Only trusted when a balance line is also present (see
+            // BALANCE_LINE_REGEX doc-comment); otherwise this is almost
+            // certainly not a bank transaction at all, so it's rejected
+            // rather than guessed at.
             else -> {
                 if (!BALANCE_LINE_REGEX.containsMatchIn(body)) return null
                 val signed = SIGNED_AMOUNT_REGEX.find(body) ?: return null
@@ -243,7 +208,7 @@ object SmsParser {
             val (numberRaw, unit) = match.destructured
             val number = normalizeNumber(numberRaw) ?: return null
             return if (unit.startsWith("ری", ignoreCase = true) || unit.startsWith("Rial", ignoreCase = true)) {
-                number / 10
+                number / 10 // Rial -> Toman
             } else {
                 number
             }
@@ -252,6 +217,9 @@ object SmsParser {
         if (bareMatch != null) {
             return normalizeNumber(bareMatch.groupValues[1])
         }
+        // Unit-less ledger line (e.g. "-2,260,000" with no تومان/ریال word at
+        // all). Same anchor requirement as identifyType's fallback: only
+        // trusted alongside a balance line, otherwise rejected.
         if (BALANCE_LINE_REGEX.containsMatchIn(body)) {
             val signedMatch = SIGNED_AMOUNT_REGEX.find(body)
             if (signedMatch != null) {
@@ -272,6 +240,8 @@ object SmsParser {
     }
 
     private fun buildDescription(body: String, type: TransactionType): String {
+        // Take a short, human-readable slice around the matched keyword so the
+        // list screen shows something meaningful instead of the full SMS.
         val keyword = (if (type == TransactionType.EXPENSE) EXPENSE_KEYWORDS else INCOME_KEYWORDS)
             .firstOrNull { body.contains(it) }
         val trimmed = body.replace(Regex("\\s+"), " ").trim()
@@ -283,35 +253,5 @@ object SmsParser {
         } else {
             trimmed.take(80)
         }
-    }
-
-    // ===== RECONCILIATION LAYER (v2.1 critique item #5) =====
-
-    /**
-     * Verifies that the extracted balance matches expected balance from previous transaction.
-     * If inconsistent, flags for review (downgrades to Unidentified).
-     */
-    private fun reconcile(parsed: ParsedSms): ReconciliationResult {
-        val balanceInSms = extractBalance(parsed.rawSms)
-        if (balanceInSms == null) {
-            return ReconciliationResult(true, null, null, 0) // No balance in SMS, can't verify
-        }
-
-        // Note: In production, this would query the last transaction for this account/bank
-        // For now, we return consistent=true and let the repository handle it
-        // The actual reconciliation with previous transaction happens in TransactionRepository
-        return ReconciliationResult(true, null, balanceInSms, 0)
-    }
-
-    /**
-     * Extracts balance from SMS text (مانده/موجودی + number).
-     */
-    private fun extractBalance(body: String): Long? {
-        val match = Regex("""(مانده|موجودی)[:\\s]*([\d۰-۹][\d۰-۹,٬]*)""").find(body)
-        if (match != null) {
-            val numberRaw = match.groupValues[2]
-            return normalizeNumber(numberRaw)
-        }
-        return null
     }
 }

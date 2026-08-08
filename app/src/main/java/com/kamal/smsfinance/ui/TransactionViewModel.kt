@@ -102,34 +102,11 @@ class TransactionViewModel(application: Application) : AndroidViewModel(applicat
 
     // --- SMS scanning ---
 
-    val initialScanDone: StateFlow<Boolean> = settings.initialScanDone
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), false)
-
-    fun setInitialScanWindowDays(days: Long) {
-        viewModelScope.launch { settings.setInitialScanWindowDays(days) }
-    }
-
-    /** Runs the first-scan (user-chosen window) or an incremental scan. */
     fun scanInbox() {
         viewModelScope.launch {
             _isLoading.value = true
             try {
                 val added = repository.scanInboxAndImport()
-                _message.value = UiMessage("$added تراکنش جدید از پیامک‌ها شناسایی و ذخیره شد")
-            } catch (e: Exception) {
-                _message.value = UiMessage("خطا در اسکن پیامک‌ها: ${e.message}", isError = true)
-            } finally {
-                _isLoading.value = false
-            }
-        }
-    }
-
-    /** Full manual re-scan (the "اسکن پیامک‌ها" button) — scans everything, dedup prevents duplicates. */
-    fun scanInboxFull() {
-        viewModelScope.launch {
-            _isLoading.value = true
-            try {
-                val added = repository.scanInboxAndImportFull()
                 _message.value = UiMessage("$added تراکنش جدید از پیامک‌ها شناسایی و ذخیره شد")
             } catch (e: Exception) {
                 _message.value = UiMessage("خطا در اسکن پیامک‌ها: ${e.message}", isError = true)

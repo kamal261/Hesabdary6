@@ -7,7 +7,7 @@ import androidx.room.PrimaryKey
 
 enum class TransactionType { EXPENSE, INCOME }
 
-enum class TransactionSource { SMS_AUTO, SMS_DELIVER, MANUAL, CHECK_SETTLEMENT }
+enum class TransactionSource { SMS_AUTO, MANUAL, CHECK_SETTLEMENT }
 
 /**
  * A single financial transaction, whether parsed automatically from a bank SMS,

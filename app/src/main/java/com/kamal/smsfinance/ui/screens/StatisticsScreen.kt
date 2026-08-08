@@ -3,11 +3,8 @@ package com.kamal.smsfinance.ui.screens
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -25,8 +22,7 @@ fun StatisticsScreen(
     debtPaid: Long,
     byBank: Map<String, Long>,
     byCategory: Map<String, Long>,
-    recurring: List<Transaction>,
-    onBankClick: (String) -> Unit = {}
+    recurring: List<Transaction>
 ) {
     val balance = totalIncome - totalExpense
 
@@ -86,21 +82,13 @@ fun StatisticsScreen(
         if (byBank.isNotEmpty()) {
             item { Text("تفکیک بر اساس بانک", style = MaterialTheme.typography.titleLarge) }
             items(byBank.entries.sortedByDescending { it.value }.toList()) { (bank, amount) ->
-                ElevatedCard(
-                    modifier = Modifier.fillMaxWidth(),
-                    onClick = { onBankClick(bank) }
-                ) {
+                ElevatedCard(modifier = Modifier.fillMaxWidth()) {
                     Row(
                         modifier = Modifier.fillMaxWidth().padding(16.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
+                        horizontalArrangement = Arrangement.SpaceBetween
                     ) {
                         Text(bank, style = MaterialTheme.typography.bodyLarge)
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text("${"%,d".format(amount)} ت", fontWeight = FontWeight.Medium)
-                            Spacer(Modifier.width(4.dp))
-                            Icon(Icons.Filled.ChevronRight, contentDescription = null, tint = MaterialTheme.colorScheme.outline)
-                        }
+                        Text("${"%,d".format(amount)} ت", fontWeight = FontWeight.Medium)
                     }
                 }
             }

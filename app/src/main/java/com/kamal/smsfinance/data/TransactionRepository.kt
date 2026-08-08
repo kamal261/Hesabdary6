@@ -1,12 +1,7 @@
-// SmsFinance file version: 3 — uses DedupEngine (SHA-256 + sliding window) and reconciliation
-// Fixes from v2.1 critique:
-// 1. Replaced DAO-level existsExact/existsSimilar with DedupEngine
-// 2. Balance reconciliation flags mismatches for review
-
+// SmsFinance file version: 2 — handles SmsParser's new sealed SmsParseResult (stores Unidentified messages for review instead of dropping them), added small-amount auto-categorization for SMS-imported expenses
 package com.kamal.smsfinance.data
 
 import android.content.Context
-import com.kamal.smsfinance.sms.DedupEngine
 import com.kamal.smsfinance.sms.ParsedSms
 import com.kamal.smsfinance.sms.SmsParser
 import com.kamal.smsfinance.sms.SmsParseResult
@@ -27,7 +22,6 @@ class TransactionRepository(
 ) {
     private val ruleEngine = RuleEngine()
     private val settings = SettingsStore(context)
-    private val dedupEngine = DedupEngine
 
     // --- Transactions ---
 
@@ -54,7 +48,12 @@ class TransactionRepository(
     suspend fun assignCounterparty(transactionId: Long, counterpartyId: Long?) =
         transactionDao.assignCounterparty(transactionId, counterpartyId)
 
-    /** Records a third-party settlement (debt collection/payment). */
+    /**
+     * Records a payment someone else made on the user's behalf (or vice
+     * versa) that will never appear in the user's own bank SMS -- the
+     * "third-party settlement" reminder flow. Always stored as a debt
+     * collection/payment tied to a counterparty.
+     */
     suspend fun addIndirectSettlement(
         amountToman: Long,
         type: TransactionType,
@@ -78,38 +77,18 @@ class TransactionRepository(
         )
     }
 
-    /** Scans the SMS inbox and imports recognized bank transactions. */
+    /**
+     * Scans the full SMS inbox (READ_SMS) once, parses every recognizable bank
+     * message, and stores new ones silently (no notification). Returns how
+     * many new transactions were added. Safe to call repeatedly -- existing
+     * rows are skipped via existsExact().
+     */
     suspend fun scanInboxAndImport(): Int {
         val messages = SmsReaderUtil.readInbox(context)
-        if (messages.isEmpty()) return 0
-
-        val initialDone = settings.initialScanDone.first()
-        val cutoff = if (!initialDone) {
-            val windowDays = settings.initialScanWindowDays.first()
-            System.currentTimeMillis() - TimeUnit.DAYS.toMillis(windowDays)
-        } else {
-            settings.lastScanTimestamp.first().takeIf { it > 0 } ?: 0L
-        }
-
-        var added = 0
-        for (msg in messages) {
-            if (msg.timestamp < cutoff) continue
-            if (handleParseResult(SmsParser.parse(msg.sender, msg.body, msg.timestamp))) added++
-        }
-        settings.setLastScanTimestamp(System.currentTimeMillis())
-        settings.setInitialScanDone(true)
-        return added
-    }
-
-    /** Manual "scan" button: full re-scan of the whole inbox. */
-    suspend fun scanInboxAndImportFull(): Int {
-        val messages = SmsReaderUtil.readInbox(context)
         var added = 0
         for (msg in messages) {
             if (handleParseResult(SmsParser.parse(msg.sender, msg.body, msg.timestamp))) added++
         }
-        settings.setLastScanTimestamp(System.currentTimeMillis())
-        settings.setInitialScanDone(true)
         return added
     }
 
@@ -118,11 +97,7 @@ class TransactionRepository(
         handleParseResult(SmsParser.parse(sender, body, timestamp))
     }
 
-    /**
-     * Routes a parse outcome to the right table.
-     * Uses DedupEngine for duplicate detection (SHA-256 + sliding window).
-     * Returns true if a new transaction was stored.
-     */
+    /** Routes a parse outcome to the right table. Returns true if a new transaction was stored. */
     private suspend fun handleParseResult(result: SmsParseResult): Boolean = when (result) {
         is SmsParseResult.Recognized -> tryInsertTransaction(result.parsed)
         is SmsParseResult.Unidentified -> {
@@ -138,32 +113,32 @@ class TransactionRepository(
         unidentifiedSmsDao.insert(UnidentifiedSms(sender = sender, body = body, timestamp = timestamp))
     }
 
-    /**
-     * Inserts a transaction with dedup check via DedupEngine.
-     * Applies smart rules and small-amount auto-categorization.
-     */
     private suspend fun tryInsertTransaction(parsed: ParsedSms): Boolean {
-        // DEDUP CHECK: Uses SHA-256 truncated + sliding window (5 min)
-        // Replaces DAO-level existsExact + existsSimilar
-        if (dedupEngine.isDuplicate(parsed.sender, parsed.rawSms, parsed.timestamp)) {
-            return false
+        val exists = transactionDao.existsExact(parsed.sender, parsed.rawSms, parsed.timestamp) > 0
+        if (exists) return false
+
+        // Fallback: if this SMS exposed an account tail, also guard against
+        // the same real-world transaction arriving under a different sender
+        // short-code (banks do this occasionally) within a 10-minute window.
+        val tail = parsed.accountTail
+        if (tail != null) {
+            val similar = transactionDao.existsSimilar(
+                accountTail = tail,
+                amount = parsed.amountToman,
+                type = parsed.type,
+                date = parsed.timestamp,
+                windowMillis = TimeUnit.MINUTES.toMillis(10)
+            ) > 0
+            if (similar) return false
         }
 
-        // Apply smart rules for categorization
         val ruleMatch = ruleEngine.evaluate(parsed.rawSms, smartRuleDao.getAllRulesOnce())
         var categoryId = ruleMatch.categoryId
 
-        // Small-amount auto-categorization: only when no rule matched, only expenses
+        // Small-amount auto-categorization: only applies when no rule already
+        // claimed this transaction, and only to expenses (per product scope).
         if (categoryId == null && parsed.type == TransactionType.EXPENSE) {
             categoryId = smallAmountCategoryIdIfApplicable(parsed.amountToman)
-        }
-
-        // Apply default category from template (SEMI_RICH templates)
-        // Note: defaultCategory is in the Template, not ParsedSms. 
-        // The template matching already applied it during extraction.
-        if (categoryId == null) {
-            // Category from template was already used during parsing if available
-            // No additional lookup needed here for now
         }
 
         transactionDao.insert(parsed.toTransaction(categoryId, ruleMatch.counterpartyId))
@@ -191,13 +166,13 @@ class TransactionRepository(
         counterpartyId = counterpartyId
     )
 
-    // --- Unidentified SMS ---
+    // --- Unidentified SMS (explainable alternative to auto-guessing) ---
 
     val unidentifiedSms: Flow<List<UnidentifiedSms>> = unidentifiedSmsDao.getActive()
     suspend fun dismissUnidentifiedSms(id: Long) = unidentifiedSmsDao.dismiss(id)
     suspend fun dismissAllUnidentifiedSms() = unidentifiedSmsDao.dismissAll()
 
-    // --- Smart rules ---
+    // --- Smart rules (Explainable Rule Engine) ---
 
     val allRules: Flow<List<SmartRule>> = smartRuleDao.getAllRules()
 
@@ -249,7 +224,12 @@ class TransactionRepository(
     suspend fun updateCheck(check: Check) = checkDao.update(check)
     suspend fun deleteCheck(check: Check) = checkDao.delete(check)
 
-    /** Marks a check as settled and creates corresponding transaction. */
+    /**
+     * Marks a check as settled and automatically creates the corresponding
+     * transaction (RECEIVABLE -> income / PAYABLE -> expense), linked to the
+     * same counterparty, so the counterparty balance stays correct without
+     * the user re-entering the amount.
+     */
     suspend fun settleCheck(check: Check, settledDate: Long = System.currentTimeMillis()) {
         val txnId = transactionDao.insert(
             Transaction(

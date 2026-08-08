@@ -15,8 +15,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import com.kamal.smsfinance.data.*
-import com.kamal.smsfinance.util.JalaliDate
+import java.text.SimpleDateFormat
 import java.util.Calendar
+import java.util.Date
 import java.util.Locale
 import java.util.concurrent.TimeUnit
 
@@ -118,7 +119,7 @@ private fun DueSoonBanner(dueSoon: List<Check>, counterpartyById: Map<Long, Coun
             }
             Spacer(Modifier.height(8.dp))
             dueSoon.take(3).forEach { chk ->
-                val dateStr = JalaliDate.formatDate(chk.dueDate)
+                val dateStr = SimpleDateFormat("yyyy/MM/dd", Locale.US).format(Date(chk.dueDate))
                 val name = chk.counterpartyId?.let { counterpartyById[it]?.name } ?: "بدون طرف حساب"
                 Text(
                     "$name — ${"%,d".format(chk.amountToman)} تومان — سررسید $dateStr",
@@ -144,7 +145,7 @@ private fun CheckCard(
         CheckStatus.CLEARED -> "تسویه شده"
         CheckStatus.BOUNCED -> "برگشتی"
     }
-    val dueDateStr = remember(check.dueDate) { JalaliDate.formatDate(check.dueDate) }
+    val dueDateStr = remember(check.dueDate) { SimpleDateFormat("yyyy/MM/dd", Locale.US).format(Date(check.dueDate)) }
 
     ElevatedCard(modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp)) {
