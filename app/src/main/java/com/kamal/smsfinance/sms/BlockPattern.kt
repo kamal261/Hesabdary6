@@ -40,29 +40,3 @@ sealed class TemplateMatchResult {
     data class Matched(val template: Template, val extracted: ParsedSms) : TemplateMatchResult()
     object NoMatch : TemplateMatchResult()
 }
-
-/**
- * Parsed SMS ready to become a Transaction
- */
-data class ParsedSms(
-    val sender: String,
-    val amountToman: Long,
-    val type: TransactionType,
-    val bankName: String,
-    val description: String,
-    val timestamp: Long,
-    val rawSms: String,
-    val accountTail: String?
-)
-
-/**
- * Outcome of trying to parse one SMS.
- * - Recognized: a full transaction was extracted (via Template RICH/SEMI_RICH).
- * - Unidentified: the message looked bank-related but couldn't be fully parsed.
- * - Ignored: confidently not a transaction (OTP, promo, balance-only, non-bank).
- */
-sealed class SmsParseResult {
-    data class Recognized(val parsed: ParsedSms) : SmsParseResult()
-    data class Unidentified(val sender: String, val body: String, val timestamp: Long) : SmsParseResult()
-    object Ignored : SmsParseResult()
-}

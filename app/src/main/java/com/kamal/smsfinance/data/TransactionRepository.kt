@@ -105,6 +105,7 @@ class TransactionRepository(
             false
         }
         SmsParseResult.Ignored -> false
+        else -> false
     }
 
     private suspend fun tryInsertUnidentified(sender: String, body: String, timestamp: Long) {

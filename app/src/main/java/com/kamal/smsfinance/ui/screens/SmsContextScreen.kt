@@ -39,9 +39,7 @@ fun SmsContextScreen(
 
     LaunchedEffect(sender) {
         loading = true
-        messages = withContext(Dispatchers.IO) {
-            SmsReaderUtil.readInboxForSender(context, sender)
-        }
+        messages = SmsReaderUtil.readInboxForSender(context, sender)
         loading = false
     }
 
