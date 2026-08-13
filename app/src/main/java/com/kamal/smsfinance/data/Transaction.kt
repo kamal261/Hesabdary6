@@ -66,5 +66,10 @@ data class Transaction(
 
     // True when the user recorded this via the "third-party payment on my
     // behalf" reminder flow (money never touched their own bank SMS trail).
-    val isIndirectSettlement: Boolean = false
+    val isIndirectSettlement: Boolean = false,
+
+    // Free-text note the user can attach to a specific transaction (e.g. "علی ۱۲ جفت کفش هم
+    // آورده، از حسابش کم کنم") -- separate from Category, since a note is transaction-specific
+    // context, not a repeatable classification. Null means no note.
+    val notes: String? = null
 )

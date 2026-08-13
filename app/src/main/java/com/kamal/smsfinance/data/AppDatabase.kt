@@ -1,10 +1,16 @@
-// SmsFinance file version: 3 — bumped to schema v6 for Category.parentId (subcategory
-// support), with a real Migration(5, 6) instead of relying on fallbackToDestructiveMigration --
-// that fallback would have wiped every user's transactions/categories/rules on this update,
-// which is unacceptable for a personal finance app (see the product's "بدون تصمیم مالی
-// غیرقابل‌بازگشت" principle -- silently deleting someone's transaction history on an app update
-// is about as irreversible as it gets). fallbackToDestructiveMigration() is kept only as a
-// safety net for schema versions not explicitly covered by a real Migration.
+// SmsFinance file version: 4 — P0 finding from a technical/accounting review, confirmed:
+// versions 1-4 have no exported schema JSON (nothing under app/schemas/ before this session),
+// so a real Migration for that gap cannot be written blind -- guessing at an old table
+// definition risks corrupting data worse than a clean wipe would. Two things follow from that:
+// 1. build.gradle.kts now exports schema JSON on every build going forward (room.schemaLocation),
+//    so this exact situation can't recur for any FUTURE version bump -- every migration from
+//    schema 5 onward (this one included) has a real Migration, verified against the actual
+//    previous schema, not a guess.
+// 2. The residual risk is scoped to installs still on schema ≤4 specifically (pre-dates
+//    subcategories). For a personal/small-team app not yet distributed to an unknown user base,
+//    treat this as a known, bounded gap -- not silently "fixed" by this commit -- until schema
+//    JSON for 1-4 can be recovered (e.g. from an old APK's compiled resources, if one exists) or
+//    it's confirmed no real install is still that old.
 package com.kamal.smsfinance.data
 
 import android.content.Context
@@ -53,7 +59,7 @@ class Converters {
 
 @Database(
     entities = [Transaction::class, Category::class, Counterparty::class, Check::class, SmartRule::class, UnidentifiedSms::class],
-    version = 6,
+    version = 7,
     exportSchema = true
 )
 @TypeConverters(Converters::class)
@@ -79,6 +85,12 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        private val MIGRATION_6_7 = object : Migration(6, 7) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE transactions ADD COLUMN notes TEXT DEFAULT NULL")
+            }
+        }
+
         fun getInstance(context: Context): AppDatabase =
             INSTANCE ?: synchronized(this) {
                 INSTANCE ?: Room.databaseBuilder(
@@ -86,7 +98,7 @@ abstract class AppDatabase : RoomDatabase() {
                     AppDatabase::class.java,
                     "sms_finance.db"
                 )
-                    .addMigrations(MIGRATION_5_6)
+                    .addMigrations(MIGRATION_5_6, MIGRATION_6_7)
                     // Safety net only for schema versions not explicitly covered above --
                     // every version bump should get a real Migration, not rely on this.
                     .fallbackToDestructiveMigration()

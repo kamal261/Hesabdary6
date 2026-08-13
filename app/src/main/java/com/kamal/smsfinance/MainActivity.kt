@@ -23,6 +23,7 @@ import androidx.compose.ui.platform.LocalContext
 import com.kamal.smsfinance.permission.SmsPermissionGate
 import com.kamal.smsfinance.ui.TransactionViewModel
 import com.kamal.smsfinance.ui.screens.*
+import com.kamal.smsfinance.ui.components.ScanRangeDialog
 import com.kamal.smsfinance.ui.theme.SmsFinanceTheme
 import com.kamal.smsfinance.util.CsvExporter
 import com.kamal.smsfinance.util.ThemeMode
@@ -36,8 +37,10 @@ private sealed class Overlay {
     object Categories : Overlay()
     object Rules : Overlay()
     object UnidentifiedSms : Overlay()
+    object Help : Overlay()
     data class CounterpartyProfile(val id: Long) : Overlay()
     data class BankTransactions(val bank: String) : Overlay()
+    data class SmsContext(val sender: String, val txnTimestamp: Long) : Overlay()
 }
 
 class MainActivity : ComponentActivity() {
@@ -56,8 +59,20 @@ class MainActivity : ComponentActivity() {
 
             SmsFinanceTheme(darkTheme = darkTheme) {
                 Surface(modifier = Modifier, color = MaterialTheme.colorScheme.background) {
-                    SmsPermissionGate(onGranted = { viewModel.scanInbox() }) {
-                        AppRoot(viewModel)
+                    SmsPermissionGate(onGranted = { viewModel.onSmsPermissionGranted() }) {
+                        val showOnboarding by viewModel.showScanRangeDialog.collectAsState()
+                        if (showOnboarding) {
+                            com.kamal.smsfinance.ui.components.OnboardingFlow(
+                                onSetSmallAmount = { enabled, threshold ->
+                                    viewModel.setSmallAmountEnabled(enabled)
+                                    viewModel.setSmallAmountThreshold(threshold)
+                                },
+                                onCreateCategories = { chosen -> viewModel.createSuggestedCategories(chosen) },
+                                onFinish = { days -> viewModel.completeOnboardingScan(days) }
+                            )
+                        } else {
+                            AppRoot(viewModel)
+                        }
                     }
                 }
             }
@@ -184,6 +199,7 @@ private fun AppRoot(viewModel: TransactionViewModel) {
                 items = unidentifiedSms,
                 onDismiss = { viewModel.dismissUnidentifiedSms(it) },
                 onDismissAll = { viewModel.dismissAllUnidentifiedSms() },
+                onExport = { viewModel.exportUnidentifiedSms() },
                 onBack = { overlay = null }
             )
             return
@@ -216,6 +232,18 @@ private fun AppRoot(viewModel: TransactionViewModel) {
                 bank = current.bank,
                 transactions = transactions.filter { it.bankName == current.bank },
                 categories = categories,
+                onBack = { overlay = null }
+            )
+            return
+        }
+        Overlay.Help -> {
+            HelpScreen(onBack = { overlay = null })
+            return
+        }
+        is Overlay.SmsContext -> {
+            SmsContextScreen(
+                sender = current.sender,
+                txnTimestamp = current.txnTimestamp,
                 onBack = { overlay = null }
             )
             return
@@ -281,7 +309,9 @@ private fun AppRoot(viewModel: TransactionViewModel) {
                         onCreateRule = { pattern, categoryId -> viewModel.addRule(pattern, categoryId, null) },
                         onOpenUnidentifiedSms = { overlay = Overlay.UnidentifiedSms },
                         onOpenChecks = { tab = Tab.CHECKS },
-                        onOpenCounterparties = { tab = Tab.COUNTERPARTIES }
+                        onOpenCounterparties = { tab = Tab.COUNTERPARTIES },
+                        onSaveNotes = { txn, notes -> viewModel.updateTransactionNotes(txn.id, notes) },
+                        onViewSmsContext = { sender, timestamp -> overlay = Overlay.SmsContext(sender, timestamp) }
                     )
                 }
                 Tab.COUNTERPARTIES -> CounterpartiesScreen(
@@ -348,7 +378,9 @@ private fun AppRoot(viewModel: TransactionViewModel) {
                     smallAmountCategoryId = smallAmountCategoryId,
                     onSmallAmountCategoryChange = { viewModel.setSmallAmountCategoryId(it) },
                     onImportCategoriesCsv = { uri -> viewModel.importCategoriesCsv(uri) },
-                    onImportCounterpartiesCsv = { uri -> viewModel.importCounterpartiesCsv(uri) }
+                    onImportCounterpartiesCsv = { uri -> viewModel.importCounterpartiesCsv(uri) },
+                    onRescan = { days -> viewModel.scanInbox(days?.let { System.currentTimeMillis() - it * 24L * 60 * 60 * 1000 }) },
+                    onOpenHelp = { overlay = Overlay.Help }
                 )
             }
         }

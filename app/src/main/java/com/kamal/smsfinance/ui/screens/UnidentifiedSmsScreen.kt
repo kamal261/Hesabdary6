@@ -20,6 +20,7 @@ fun UnidentifiedSmsScreen(
     items: List<UnidentifiedSms>,
     onDismiss: (UnidentifiedSms) -> Unit,
     onDismissAll: () -> Unit,
+    onExport: () -> Unit,
     onBack: () -> Unit
 ) {
     Scaffold(
@@ -29,6 +30,10 @@ fun UnidentifiedSmsScreen(
                 navigationIcon = { TextButton(onClick = onBack) { Text("بازگشت") } },
                 actions = {
                     if (items.isNotEmpty()) {
+                        // Exports sender + full raw text of every item below, for spotting real
+                        // patterns across many messages at once instead of one screenshot at a
+                        // time (CSV, UTF-8 BOM for Excel; see UnidentifiedSmsExporter).
+                        TextButton(onClick = onExport) { Text("خروجی برای بررسی") }
                         TextButton(onClick = onDismissAll) { Text("پاک کردن همه") }
                     }
                 }

@@ -11,6 +11,7 @@ package com.kamal.smsfinance
  */
 object BuildInfo {
     const val BRANCH_LABEL = "Hesabdary6-main"
-    const val BUILD_LABEL = "rev 12 — فیکس مبلغ لجر (ملی/رسالت) + ادغام فیکس‌های نسخه ۵"
-    const val BUILD_DATE = "2026-08-09"
+    const val DEVELOPER_NAME = "بامداد خمار"
+    const val BUILD_LABEL = "rev 20 — فیکس ۴ مورد P0 گزارش ارزیابی: مانده طرف‌حساب، remap بازیابی بکاپ، اتمیک‌بودن تسویه چک، جلوگیری از عود migration مخرب"
+    const val BUILD_DATE = "2026-08-12"
 }

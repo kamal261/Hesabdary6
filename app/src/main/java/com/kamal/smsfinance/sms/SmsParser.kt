@@ -1,16 +1,10 @@
-// SmsFinance file version: 4 — this session's headline fix: the terse/unit-less ledger-amount
-// fallback (Melli "برداشت:500,000-", Resalat "-2,260,000") was silently producing WRONG
-// amounts, not just failing safely. Confirmed against a real 659-message Melli export: total
-// recorded amount was 735 Toman against an actual 142,147,288 Toman. Root cause: the old
-// SIGNED_AMOUNT_REGEX only supported a LEADING sign ("-9,000") and searched the *entire* body,
-// so on Melli's TRAILING-sign format ("500,000-") it instead grabbed a stray "-13" out of the
-// date/time trailer ("...0708-13:07"). Fixed by extractLedgerSignedAmount() below: supports
-// both sign positions, and restricts the search to the text before the balance line so the
-// date/time trailer -- which always comes after it -- is never in scope.
-// Also merged in three targeted fixes from a parallel branch's real-data analysis: broader
-// URL_REGEX (bare domains, not just http/www-prefixed), a promotional-tail truncator so a real
-// transaction bundled with ad copy still parses, and a negative-lookahead so "واریز" doesn't
-// match inside the ad-imperative "واریزکن".
+// SmsFinance file version: 5 — this session, found via a real fresh export where Blu Bank
+// (over half the user's transaction volume) was showing up entirely as "نامشخص": the body-text
+// bank-name fallback required identifiers longer than 3 characters, which silently excluded
+// "بلو"/"Blu"/"BLU" (all exactly 3 chars) -- see identifyBank(). Also added two IGNORE_KEYWORDS
+// entries for false positives found in the same export: a carrier recharge-offer promo template
+// counted as a withdrawal, and a bill-issuance notice ("قبض صادره شده", informational, not a
+// payment) counted as a withdrawal.
 package com.kamal.smsfinance.sms
 
 import com.kamal.smsfinance.data.TransactionType
@@ -87,16 +81,52 @@ object SmsParser {
     // Keyword -> transaction type. Order matters: more specific phrases first.
     private val EXPENSE_KEYWORDS = listOf(
         "پرداخت قسط", "خرید", "برداشت", "کارمزد", "هزینه", "پرداخت اینترنتی",
-        "پرداخت شد", "انتقال به", "کسر از", "چک", "قبض", "بیمه", "حق بیمه"
+        "پرداخت شد", "انتقال به", "کسر از", "چک", "قبض", "حق بیمه"
     )
     private val INCOME_KEYWORDS = listOf(
-        "واریز", "دریافت", "واریزی", "به حساب شما", "بازگشت وجه", "سود سپرده"
+        "واریز", "دریافت وجه", "دریافت مبلغ", "واریزی", "به حساب شما", "بازگشت وجه", "سود سپرده"
     )
 
     // Messages that only mention balance / OTP / promos, never a real txn.
     private val IGNORE_KEYWORDS = listOf(
-        "موجودی شما", "رمز یکبار مصرف", "رمز پویا", "رمز:", "کد تایید", "کد فعال",
-        "تخفیف", "جشنواره", "تبلیغ", "OTP"
+        "موجودی شما", "رمز یکبار مصرف", "رمز پویا", "کد تایید", "کد فعال",
+        "تخفیف", "جشنواره", "تبلیغ", "OTP",
+        // Carrier recharge-offer promo template ("with every 100,000 Toman recharge or credit
+        // top-up, get X") -- was being counted as a real 100,000 Toman withdrawal, repeatedly,
+        // in a real export.
+        "با خرید هر شارژ",
+        // Bill *issuance* notice ("a bill has been issued for you") -- informational, not a
+        // payment confirmation. Was being counted as a completed withdrawal.
+        "قبض صادره شده",
+        // Third-party wallet apps (Avanoo and others) are not a valid transaction source per
+        // product policy: wallet credit is itself ultimately funded by a real bank transaction,
+        // so counting the wallet deduction too would double-count the same money. Rejecting on
+        // the generic phrase "کیف پول" ("wallet") rather than naming individual apps (اوانو,
+        // اسنپ, تپسی, ...) is deliberate -- no real bank SMS uses this phrase (banks report
+        // "حساب"/"کارت", never "کیف پول"), so this rule doesn't need to be updated every time a
+        // new wallet app shows up, and can't reject a genuine bank message.
+        "کیف پول",
+        // Bank admin/security notices that mention "ثبت شده" (registered) or phone-number
+        // change confirmations -- real recurring template (confirmed: ResalatBank sends this
+        // every time internet-banking mobile number is updated), never a transaction. Without
+        // this, it lands in the Unidentified queue purely because the sender is a known bank
+        // (see the "Zero Silent Loss" design note on parse()) even though it's pure noise.
+        "شماره همراه ثبت شده",
+        // Confirmed recurring templates with zero transactional content, from real bank/carrier
+        // senders: Pasargad's pure login/OTP-delivery notices (no amount ever), and a carrier's
+        // "this phone number is now available for purchase" listing (not a purchase itself).
+        "ورود به وی بنک", "کد شناسایی ورود", "کد ارسالی محرمانه",
+        "بسته مکالمه همراهی",
+        // Carrier missed-call notification service ("989914") -- confirmed from a real export
+        // to be, by far, the single largest source of Unidentified-queue noise (87% of one
+        // user's queue). Frequently carries an embedded USSD data-package ad ("خرید بسته‌های
+        // دیتا با #2*100*") whose "خرید" keyword survives promo-tail truncation since it comes
+        // *before* the "#" marker, not after -- so this needed its own rejection, truncation
+        // alone wasn't enough.
+        "تماس بی پاسخ", "تماس بی‌پاسخ",
+        // Carrier "bill issued, pay for a free data/call bonus" promo -- variant wording of the
+        // "قبض صادره شده" rule already above ("صادر شد" vs "صادره شده").
+        "قبض شما صادر"
     )
 
     // A known promotional "tail" is truncated off before parsing, so a real transaction
@@ -128,6 +158,14 @@ object SmsParser {
     // Fallback: a bare number of 5+ digits immediately followed by common
     // currency-less bank phrasing ("مبلغ 500000 از").
     private val BARE_AMOUNT_REGEX = Regex("""مبلغ[:\s]*([\d۰-۹][\d۰-۹,٬،]*)""")
+
+    // Resalat's own "خرید ساده" (simple purchase) receipt template labels the amount as
+    // "مبلغ (ریال): 125" -- unit inside parentheses, between the label and the number -- which
+    // neither AMOUNT_REGEX (needs "number unit" adjacency) nor BARE_AMOUNT_REGEX (needs the
+    // number right after "مبلغ") can match. Confirmed against a real export: several genuine
+    // small purchases (125, 842 Rial) were landing in the Unidentified queue purely because of
+    // this label format, not because anything about them was actually ambiguous.
+    private val LABELED_AMOUNT_REGEX = Regex("""مبلغ\s*\((ریال|تومان)\)\s*[:\s]*([\d۰-۹][\d۰-۹,٬،]*)""")
 
     private val BALANCE_LINE_REGEX = Regex("""(مانده|موجودی)[:\s]*[\d۰-۹][\d۰-۹,٬،]*""")
 
@@ -171,6 +209,36 @@ object SmsParser {
         val normalized = sender.replace(Regex("""[\s\-()]"""), "")
         return PERSONAL_MOBILE_REGEX.matches(normalized)
     }
+
+    // Specific, confirmed non-bank senders that pass the shortcode-shape check (short numeric
+    // id) and send frequent, varied marketing copy -- keyword/content rules can't reliably
+    // catch this content because it's simply ordinary Persian, and it changes constantly.
+    // Sender identity is stable in a way content never is, so this list is a more durable fix
+    // than chasing new ad phrasings one at a time. Confirmed from a real export: Digikala's
+    // shortcode alone accounted for a large share of the Unidentified queue, including messages
+    // with no link at all ("مرضیه جان، خریدت با ارسال سه ساعته می‌رسه...") that no keyword or
+    // URL rule could have caught anyway.
+    private val NON_BANK_SENDER_IDS = listOf("5000333", "7171") // Digikala, ringtone/caller-tune service
+
+    private fun isKnownNonBankSender(sender: String): Boolean {
+        val normalized = sender.replace(Regex("""[\s\-()+]"""), "")
+        return NON_BANK_SENDER_IDS.any { normalized.endsWith(it) }
+    }
+
+    // Real bank SMS come from either a known bank's own identifier (BANK_SENDERS) or a generic
+    // numeric "shortcode" -- Iranian SMS gateways issue short digit-only sender ids (roughly
+    // 4-9 digits) to businesses generally, banks included. A sender that's an alphabetic brand
+    // NAME ("DIGIKALA", "BimehIran") or a full 10-digit number (closer to personal-mobile
+    // length than a shortcode -- confirmed against a real "+9890005252" marketing sender) is
+    // never a bank we don't already recognize by name. This matters because content-keyword
+    // matching alone (identifyType) is too weak a signal for an unverified sender: "خرید",
+    // "بیمه", "دریافت" are ordinary Persian words that appear constantly in non-bank SMS too,
+    // and no fixed keyword list can ever fully close that gap. Restricting *which senders* a
+    // bare keyword match is trusted for closes a whole class of false positives at once,
+    // instead of chasing them one phrase at a time.
+    private val SHORTCODE_REGEX = Regex("""^\+?\d{4,9}$""")
+    private fun looksLikeBankShortcode(sender: String): Boolean =
+        SHORTCODE_REGEX.matches(sender.replace(Regex("""[\s\-()]"""), ""))
 
     // Bank fees and insurance premiums are real money leaving the account, never blocklisted --
     // just given a sensible default category instead of "بدون دسته" when no SmartRule has
@@ -218,6 +286,7 @@ object SmsParser {
     fun parse(sender: String, body: String, timestamp: Long): SmsParseResult {
         if (body.isBlank()) return SmsParseResult.Ignored
         if (isPersonalMobileSender(sender)) return SmsParseResult.Ignored
+        if (isKnownNonBankSender(sender)) return SmsParseResult.Ignored
 
         val normalizedBody = normalizeArabicToPersian(body)
         if (IGNORE_KEYWORDS.any { normalizedBody.contains(it) }) return SmsParseResult.Ignored
@@ -254,20 +323,42 @@ object SmsParser {
         // failed to extract), or the sender is a known bank short-code.
         // Otherwise this is ordinary non-bank text and is safely ignored,
         // so the review list doesn't fill up with unrelated personal SMS.
-        val looksBankRelated = type != null || isKnownBank
+        val looksBankRelated = isKnownBank || (type != null && looksLikeBankShortcode(sender))
         return if (looksBankRelated) SmsParseResult.Unidentified(sender, body, timestamp) else SmsParseResult.Ignored
     }
 
+    // For an identifier that's all digits (a shortcode), a substring "contains" match is
+    // dangerously loose: a long sender number can coincidentally CONTAIN a shorter real
+    // shortcode purely by chance (confirmed twice against real data -- Iran Post's
+    // "98100000193" contains Bank Melli's "10000019", and an immigration-consulting ad's
+    // "9810004555" contains Bank Shahr's "10004555"). For a numeric identifier, this requires
+    // the sender -- after stripping a leading +98/0098/98/0 country-code-style prefix -- to
+    // EXACTLY equal the identifier, not just contain it somewhere. Text identifiers ("Resalat",
+    // "ملی") keep substring matching, since real senders often add a suffix ("ResalatBank").
+    private fun senderMatchesIdentifier(sender: String, identifier: String): Boolean {
+        if (identifier.all { it.isDigit() }) {
+            val strippedSender = sender.replace(Regex("""^(\+98|0098|98|0)"""), "")
+            return strippedSender == identifier
+        }
+        return sender.contains(identifier, ignoreCase = true)
+    }
+
     private fun isKnownBankSender(sender: String): Boolean =
-        BANK_SENDERS.values.any { identifiers -> identifiers.any { sender.contains(it, ignoreCase = true) } }
+        BANK_SENDERS.values.any { identifiers -> identifiers.any { senderMatchesIdentifier(sender, it) } }
 
     private fun identifyBank(sender: String, body: String): String? {
         for ((bankName, identifiers) in BANK_SENDERS) {
-            if (identifiers.any { sender.contains(it, ignoreCase = true) }) return bankName
+            if (identifiers.any { senderMatchesIdentifier(sender, it) }) return bankName
         }
         // Fall back to scanning the body text itself for a bank name mention.
+        // Threshold is >= 3, not > 3: a handful of real bank names/abbreviations are exactly
+        // 3 characters ("بلو", "Blu", "BLU", "ملت", "سپه") and were being silently excluded by
+        // a stricter >3 guard -- confirmed against a real export where Blu Bank (matching
+        // "بلو برداشت پول..." in the SMS body, not the longer "بلوبانک") accounted for over
+        // half the user's transactions and every single one landed as "نامشخص". 2-character
+        // identifiers ("دی") stay excluded -- too short to be a safe substring match.
         for ((bankName, identifiers) in BANK_SENDERS) {
-            if (identifiers.any { it.length > 3 && body.contains(it, ignoreCase = true) }) return bankName
+            if (identifiers.any { it.length >= 3 && body.contains(it, ignoreCase = true) }) return bankName
         }
         return null
     }
@@ -320,6 +411,11 @@ object SmsParser {
         val bareMatch = BARE_AMOUNT_REGEX.find(body)
         if (bareMatch != null) {
             return normalizeNumber(bareMatch.groupValues[1])
+        }
+        val labeledMatch = LABELED_AMOUNT_REGEX.find(body)
+        if (labeledMatch != null) {
+            val number = normalizeNumber(labeledMatch.groupValues[2]) ?: return null
+            return if (labeledMatch.groupValues[1].startsWith("ری")) number / 10 else number
         }
         // Unit-less ledger line (e.g. "500,000-" or "-2,260,000", no تومان/ریال word at all).
         return extractLedgerSignedAmount(body)?.second

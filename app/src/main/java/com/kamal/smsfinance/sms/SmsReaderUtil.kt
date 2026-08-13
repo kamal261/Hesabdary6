@@ -1,3 +1,6 @@
+// SmsFinance file version: 2 — readInbox() now accepts an optional sinceMillis filter (ported
+// from the sibling branch's fix for the same gap: reading the entire SMS history by default,
+// with no way to scope it, was both slow and mostly irrelevant on a phone with years of SMS).
 package com.kamal.smsfinance.sms
 
 import android.content.Context
@@ -17,8 +20,9 @@ object SmsReaderUtil {
         ContextCompat.checkSelfPermission(context, Manifest.permission.READ_SMS) ==
             PackageManager.PERMISSION_GRANTED
 
-    /** Reads every inbox SMS. Must only be called after READ_SMS is granted. */
-    suspend fun readInbox(context: Context): List<RawSms> = withContext(Dispatchers.IO) {
+    /** Reads inbox SMS, optionally restricted to messages received at or after [sinceMillis].
+     * Pass null to read the entire inbox. Must only be called after READ_SMS is granted. */
+    suspend fun readInbox(context: Context, sinceMillis: Long? = null): List<RawSms> = withContext(Dispatchers.IO) {
         if (!hasReadSmsPermission(context)) return@withContext emptyList()
 
         val results = mutableListOf<RawSms>()
@@ -28,8 +32,10 @@ object SmsReaderUtil {
             Telephony.Sms.BODY,
             Telephony.Sms.DATE
         )
+        val selection = if (sinceMillis != null) "${Telephony.Sms.DATE} >= ?" else null
+        val selectionArgs = if (sinceMillis != null) arrayOf(sinceMillis.toString()) else null
 
-        context.contentResolver.query(uri, projection, null, null, "${Telephony.Sms.DATE} DESC")
+        context.contentResolver.query(uri, projection, selection, selectionArgs, "${Telephony.Sms.DATE} DESC")
             ?.use { cursor ->
                 val addressIdx = cursor.getColumnIndexOrThrow(Telephony.Sms.ADDRESS)
                 val bodyIdx = cursor.getColumnIndexOrThrow(Telephony.Sms.BODY)

@@ -13,6 +13,8 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.kamal.smsfinance.data.Category
@@ -43,7 +45,9 @@ fun TransactionListScreen(
     onCreateRule: (pattern: String, categoryId: Long?) -> Unit,
     onOpenUnidentifiedSms: () -> Unit,
     onOpenChecks: () -> Unit,
-    onOpenCounterparties: () -> Unit
+    onOpenCounterparties: () -> Unit,
+    onSaveNotes: (Transaction, String?) -> Unit,
+    onViewSmsContext: (sender: String, timestamp: Long) -> Unit
 ) {
     var query by remember { mutableStateOf("") }
     var onlyUncategorized by remember { mutableStateOf(false) }
@@ -147,6 +151,14 @@ fun TransactionListScreen(
                 onAssignCategory(txn, categoryId)
                 detailFor = null
                 if (categoryId != null) ruleSuggestionFor = txn to categoryId
+            },
+            onSaveNotes = { notes -> onSaveNotes(txn, notes) },
+            onViewSmsContext = {
+                val sender = txn.smsSender
+                if (sender != null) {
+                    detailFor = null
+                    onViewSmsContext(sender, txn.date)
+                }
             }
         )
     }
@@ -249,7 +261,9 @@ private fun TransactionDetailDialog(
     categories: List<Category>,
     categoryUsageCounts: Map<Long, Int>,
     onDismiss: () -> Unit,
-    onSelectCategory: (Long?) -> Unit
+    onSelectCategory: (Long?) -> Unit,
+    onSaveNotes: (String?) -> Unit,
+    onViewSmsContext: () -> Unit
 ) {
     val isIncome = transaction.type == TransactionType.INCOME
     val amountColor = if (isIncome) GreenIncome else RedExpense
@@ -257,6 +271,8 @@ private fun TransactionDetailDialog(
         SimpleDateFormat("yyyy/MM/dd - HH:mm:ss", Locale.US).format(Date(transaction.date))
     }
     val fullText = transaction.rawSms?.takeIf { it.isNotBlank() } ?: transaction.description
+    val clipboard = LocalClipboardManager.current
+    var notesText by remember(transaction.id) { mutableStateOf(transaction.notes ?: "") }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -284,7 +300,15 @@ private fun TransactionDetailDialog(
                 )
                 Spacer(Modifier.height(12.dp))
 
-                Text("متن کامل پیامک", style = MaterialTheme.typography.titleMedium)
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                    Text("متن کامل پیامک", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+                    // Lets the user share the raw SMS text with someone else (e.g. a colleague)
+                    // to jog their memory about which transaction this was -- confirmed real
+                    // need: "گاهی لازمه کپی پیامک رو برای کسی ارسال کنیم".
+                    IconButton(onClick = { clipboard.setText(AnnotatedString(fullText)) }) {
+                        Icon(Icons.Filled.ContentCopy, contentDescription = "کپی متن پیامک")
+                    }
+                }
                 Spacer(Modifier.height(4.dp))
                 Surface(
                     color = MaterialTheme.colorScheme.surfaceVariant,
@@ -301,6 +325,32 @@ private fun TransactionDetailDialog(
                     }
                     transaction.accountTail?.let {
                         Text("چهار رقم آخر حساب: $it", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+
+                if (transaction.smsSender != null) {
+                    Spacer(Modifier.height(8.dp))
+                    // Shows the raw inbox around this SMS -- was already fully built
+                    // (SmsContextScreen) but never wired into navigation until now.
+                    OutlinedButton(onClick = onViewSmsContext, modifier = Modifier.fillMaxWidth()) {
+                        Text("مشاهده پیامک‌های قبل و بعد از این فرستنده")
+                    }
+                }
+
+                Spacer(Modifier.height(16.dp))
+                Text("یادداشت", style = MaterialTheme.typography.titleMedium)
+                Spacer(Modifier.height(4.dp))
+                OutlinedTextField(
+                    value = notesText,
+                    onValueChange = { notesText = it },
+                    placeholder = { Text("مثلاً: علی ۱۲ جفت کفش هم آورده، از حسابش کم کنم") },
+                    modifier = Modifier.fillMaxWidth(),
+                    minLines = 2
+                )
+                if (notesText != (transaction.notes ?: "")) {
+                    Spacer(Modifier.height(4.dp))
+                    TextButton(onClick = { onSaveNotes(notesText) }, modifier = Modifier.align(Alignment.End)) {
+                        Text("ذخیره یادداشت")
                     }
                 }
 

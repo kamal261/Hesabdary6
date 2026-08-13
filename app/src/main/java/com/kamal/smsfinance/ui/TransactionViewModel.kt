@@ -14,6 +14,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import java.io.File
@@ -102,11 +103,11 @@ class TransactionViewModel(application: Application) : AndroidViewModel(applicat
 
     // --- SMS scanning ---
 
-    fun scanInbox() {
+    fun scanInbox(sinceMillis: Long? = null) {
         viewModelScope.launch {
             _isLoading.value = true
             try {
-                val added = repository.scanInboxAndImport()
+                val added = repository.scanInboxAndImport(sinceMillis)
                 _message.value = UiMessage("$added تراکنش جدید از پیامک‌ها شناسایی و ذخیره شد")
             } catch (e: Exception) {
                 _message.value = UiMessage("خطا در اسکن پیامک‌ها: ${e.message}", isError = true)
@@ -114,6 +115,46 @@ class TransactionViewModel(application: Application) : AndroidViewModel(applicat
                 _isLoading.value = false
             }
         }
+    }
+
+    val onboardingScanDone: StateFlow<Boolean> = settings.onboardingScanDone
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), false)
+
+    private val _showScanRangeDialog = MutableStateFlow(false)
+    val showScanRangeDialog: StateFlow<Boolean> = _showScanRangeDialog.asStateFlow()
+
+    /** Called once READ_SMS is granted. Reads the *persisted* onboarding flag directly
+     * (settings.onboardingScanDone.first(), not the StateFlow above) to avoid a race with that
+     * StateFlow's default value before DataStore's first real emission arrives. A returning
+     * user (flag already true) gets the existing full-inbox scan-with-dedup behavior right
+     * away; a first-time user sees ScanRangeDialog instead of an unannounced full-history scan. */
+    fun onSmsPermissionGranted() {
+        viewModelScope.launch {
+            if (settings.onboardingScanDone.first()) scanInbox() else _showScanRangeDialog.value = true
+        }
+    }
+
+    /** Called once, from the first-run "چند وقت گذشته اسکن بشه؟" dialog, or any time from
+     * Settings > "اسکن مجدد پیامک‌ها" (re-scan is always available afterward, not a one-time
+     * choice -- e.g. after granting READ_SMS more broadly, or wanting to pull in older history).
+     * [days]=null means "کل تاریخچه" (no date filter). */
+    fun completeOnboardingScan(days: Int?) {
+        _showScanRangeDialog.value = false
+        val sinceMillis = days?.let { System.currentTimeMillis() - it * 24L * 60 * 60 * 1000 }
+        viewModelScope.launch { settings.setOnboardingScanDone(true) }
+        scanInbox(sinceMillis)
+    }
+
+    val onboardingGuideDone: StateFlow<Boolean> = settings.onboardingGuideDone
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), true) // default true: never flash the guide for a returning user before DataStore's real value loads
+
+    /** Called from the end (or explicit skip) of OnboardingScreen -- the multi-step first-run
+     * guide covering what the app does, a tour of its tabs, small-amount filter setup, and the
+     * category/subcategory builder. Aimed at non-technical users per product scope ("کاربران ما
+     * افراد غیرمتخصص و گاه کاملاً عامی هستن"), so it's a mandatory one-time walkthrough, not an
+     * optional tip users can miss. */
+    fun completeOnboardingGuide() {
+        viewModelScope.launch { settings.setOnboardingGuideDone(true) }
     }
 
     // --- Manual transactions ---
@@ -170,6 +211,10 @@ class TransactionViewModel(application: Application) : AndroidViewModel(applicat
         viewModelScope.launch { repository.assignCounterparty(transactionId, counterpartyId) }
     }
 
+    fun updateTransactionNotes(transactionId: Long, notes: String?) {
+        viewModelScope.launch { repository.updateTransactionNotes(transactionId, notes) }
+    }
+
     // --- Smart rules (Explainable Rule Engine) ---
 
     fun addRule(pattern: String, categoryId: Long?, counterpartyId: Long?) {
@@ -187,6 +232,25 @@ class TransactionViewModel(application: Application) : AndroidViewModel(applicat
 
     fun addCategory(name: String, kind: CategoryKind, parentId: Long? = null) {
         viewModelScope.launch { repository.addCategory(name, kind, parentId) }
+    }
+
+    /** Same as [addCategory] but returns the new row id directly -- used by the onboarding
+     * category-builder, which needs the id immediately (e.g. to add a subcategory under a
+     * category the user just created in the same step). */
+    suspend fun addCategoryAndGetId(name: String, kind: CategoryKind, parentId: Long? = null): Long? =
+        repository.addCategory(name, kind, parentId).takeIf { it > 0 }
+
+    /** Bulk-creates the categories/subcategories chosen in the onboarding wizard. Parents are
+     * inserted first so their real (freshly-assigned) id is available for their children --
+     * the suggestion list's own structure has no ids, only names, so this can't be a single
+     * batch insert. */
+    suspend fun createSuggestedCategories(suggestions: List<com.kamal.smsfinance.ui.components.SuggestedCategory>) {
+        for (suggestion in suggestions) {
+            val parentId = addCategoryAndGetId(suggestion.name, suggestion.kind)
+            for (childName in suggestion.children) {
+                addCategoryAndGetId(childName, suggestion.kind, parentId)
+            }
+        }
     }
 
     fun deleteCategory(category: Category) {
@@ -251,11 +315,12 @@ class TransactionViewModel(application: Application) : AndroidViewModel(applicat
 
     /** Owed-to-me total and I-owe total, summed across every counterparty -- derived live, never stored. */
     fun counterpartyBalanceSummary(list: List<Transaction> = allTransactions.value): Pair<Long, Long> {
+        val categoryKindById = allCategories.value.associate { it.id to it.kind }
         val byCounterparty = list.filter { it.counterpartyId != null }.groupBy { it.counterpartyId!! }
         var owedToMe = 0L
         var iOwe = 0L
         byCounterparty.values.forEach { txns ->
-            val balance = txns.sumOf { if (it.type == TransactionType.INCOME) it.amountToman else -it.amountToman }
+            val balance = txns.counterpartyBalance { categoryId -> categoryId?.let { categoryKindById[it] } }
             if (balance > 0) owedToMe += balance else iOwe += -balance
         }
         return owedToMe to iOwe
@@ -297,6 +362,24 @@ class TransactionViewModel(application: Application) : AndroidViewModel(applicat
                 val file = CsvExporter.export(getApplication(), allTransactions.value, recurringIds(allTransactions.value))
                 _lastExportedFile.value = file
                 _message.value = UiMessage("فایل CSV با موفقیت ساخته شد")
+            } catch (e: Exception) {
+                _message.value = UiMessage("خطا در خروجی گرفتن: ${e.message}", isError = true)
+            } finally {
+                _isLoading.value = false
+            }
+        }
+    }
+
+    /** Exports every currently-active Unidentified SMS with its full, untruncated raw text --
+     * for spotting real patterns across many messages at once (which senders/phrasings keep
+     * recurring) instead of debugging one screenshot at a time. */
+    fun exportUnidentifiedSms() {
+        viewModelScope.launch {
+            _isLoading.value = true
+            try {
+                val file = UnidentifiedSmsExporter.export(getApplication(), unidentifiedSms.value)
+                _lastExportedFile.value = file
+                _message.value = UiMessage("فایل پیامک‌های شناسایی‌نشده ساخته شد")
             } catch (e: Exception) {
                 _message.value = UiMessage("خطا در خروجی گرفتن: ${e.message}", isError = true)
             } finally {

@@ -9,6 +9,7 @@
 package com.kamal.smsfinance.data
 
 import android.content.Context
+import androidx.room.withTransaction
 import com.kamal.smsfinance.sms.DedupEngine
 import com.kamal.smsfinance.sms.ParsedSms
 import com.kamal.smsfinance.sms.SmsParser
@@ -20,6 +21,7 @@ import kotlinx.coroutines.flow.first
 import java.util.concurrent.TimeUnit
 
 class TransactionRepository(
+    private val db: AppDatabase,
     private val transactionDao: TransactionDao,
     private val categoryDao: CategoryDao,
     private val counterpartyDao: CounterpartyDao,
@@ -56,6 +58,9 @@ class TransactionRepository(
     suspend fun assignCounterparty(transactionId: Long, counterpartyId: Long?) =
         transactionDao.assignCounterparty(transactionId, counterpartyId)
 
+    suspend fun updateTransactionNotes(transactionId: Long, notes: String?) =
+        transactionDao.updateNotes(transactionId, notes?.takeIf { it.isNotBlank() })
+
     /**
      * Records a payment someone else made on the user's behalf (or vice
      * versa) that will never appear in the user's own bank SMS -- the
@@ -91,8 +96,8 @@ class TransactionRepository(
      * many new transactions were added. Safe to call repeatedly -- existing
      * rows are skipped via existsExact().
      */
-    suspend fun scanInboxAndImport(): Int {
-        val messages = SmsReaderUtil.readInbox(context)
+    suspend fun scanInboxAndImport(sinceMillis: Long? = null): Int {
+        val messages = SmsReaderUtil.readInbox(context, sinceMillis)
         var added = 0
         for (msg in messages) {
             if (handleParseResult(SmsParser.parse(msg.sender, msg.body, msg.timestamp))) added++
@@ -256,21 +261,35 @@ class TransactionRepository(
      * transaction (RECEIVABLE -> income / PAYABLE -> expense), linked to the
      * same counterparty, so the counterparty balance stays correct without
      * the user re-entering the amount.
+     *
+     * P0 fix: wrapped in db.withTransaction{} with a re-fetch + PENDING guard
+     * INSIDE the transaction. Previously this ran as two separate, unguarded
+     * writes (insert transaction, then update check) -- calling this twice in
+     * quick succession (double-tap, or two concurrent callers) could create
+     * two settlement transactions for the same check before the second
+     * status update overwrote the first. Re-reading the check's current
+     * status from the DB inside the transaction (not trusting the [check]
+     * parameter, which could be stale) makes a second call a safe no-op.
      */
     suspend fun settleCheck(check: Check, settledDate: Long = System.currentTimeMillis()) {
-        val txnId = transactionDao.insert(
-            Transaction(
-                amountToman = check.amountToman,
-                type = if (check.type == CheckType.RECEIVABLE) TransactionType.INCOME else TransactionType.EXPENSE,
-                bankName = "چک",
-                description = check.description?.takeIf { it.isNotBlank() }
-                    ?: if (check.type == CheckType.RECEIVABLE) "وصول چک" else "پرداخت چک",
-                date = settledDate,
-                source = TransactionSource.CHECK_SETTLEMENT,
-                counterpartyId = check.counterpartyId
+        db.withTransaction {
+            val current = checkDao.getById(check.id) ?: return@withTransaction
+            if (current.status != CheckStatus.PENDING) return@withTransaction
+
+            val txnId = transactionDao.insert(
+                Transaction(
+                    amountToman = current.amountToman,
+                    type = if (current.type == CheckType.RECEIVABLE) TransactionType.INCOME else TransactionType.EXPENSE,
+                    bankName = "چک",
+                    description = current.description?.takeIf { it.isNotBlank() }
+                        ?: if (current.type == CheckType.RECEIVABLE) "وصول چک" else "پرداخت چک",
+                    date = settledDate,
+                    source = TransactionSource.CHECK_SETTLEMENT,
+                    counterpartyId = current.counterpartyId
+                )
             )
-        )
-        checkDao.update(check.copy(status = CheckStatus.CLEARED, paidDate = settledDate, settledTransactionId = txnId))
+            checkDao.update(current.copy(status = CheckStatus.CLEARED, paidDate = settledDate, settledTransactionId = txnId))
+        }
     }
 
     suspend fun markCheckBounced(check: Check) {

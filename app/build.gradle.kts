@@ -52,6 +52,16 @@ android {
     }
 }
 
+// Writes Room's schema to app/schemas/<version>.json on every build. Without this, a schema
+// change has no record of what the PREVIOUS version's tables looked like, making it impossible
+// to write a real Migration for it later -- confirmed the hard way: versions 1-4 have no
+// exported schema, so the only way to bridge them today is Room's destructive fallback (see
+// AppDatabase.kt), which silently wipes a user's data on upgrade from an old install. This
+// won't fix that existing gap, but guarantees it can't happen again for any future version.
+ksp {
+    arg("room.schemaLocation", "$projectDir/schemas")
+}
+
 dependencies {
     // Core
     implementation("androidx.core:core-ktx:1.13.1")

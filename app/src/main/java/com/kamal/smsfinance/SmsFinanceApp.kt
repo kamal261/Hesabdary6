@@ -14,6 +14,7 @@ class SmsFinanceApp : Application() {
     val database by lazy { AppDatabase.getInstance(this) }
     val repository by lazy {
         TransactionRepository(
+            db = database,
             transactionDao = database.transactionDao(),
             categoryDao = database.categoryDao(),
             counterpartyDao = database.counterpartyDao(),

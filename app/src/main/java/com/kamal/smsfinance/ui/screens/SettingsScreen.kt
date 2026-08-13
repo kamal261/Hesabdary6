@@ -47,10 +47,13 @@ fun SettingsScreen(
     smallAmountCategoryId: Long?,
     onSmallAmountCategoryChange: (Long?) -> Unit,
     onImportCategoriesCsv: (android.net.Uri) -> Unit,
-    onImportCounterpartiesCsv: (android.net.Uri) -> Unit
+    onImportCounterpartiesCsv: (android.net.Uri) -> Unit,
+    onRescan: (days: Int?) -> Unit,
+    onOpenHelp: () -> Unit
 ) {
     var webhookField by remember(webhookUrl) { mutableStateOf(webhookUrl) }
     var showDeleteConfirm by remember { mutableStateOf(false) }
+    var showRescanDialog by remember { mutableStateOf(false) }
 
     val restoreLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.GetContent()
@@ -89,6 +92,12 @@ fun SettingsScreen(
                 }
                 OutlinedButton(onClick = onOpenUnidentifiedSms, modifier = Modifier.fillMaxWidth()) {
                     Text(if (unidentifiedSmsCount > 0) "پیامک‌های شناسایی‌نشده ($unidentifiedSmsCount)" else "پیامک‌های شناسایی‌نشده")
+                }
+                OutlinedButton(onClick = { showRescanDialog = true }, modifier = Modifier.fillMaxWidth()) {
+                    Text("اسکن مجدد پیامک‌ها (بازه دلخواه)")
+                }
+                OutlinedButton(onClick = onOpenHelp, modifier = Modifier.fillMaxWidth()) {
+                    Text("راهنمای استفاده")
                 }
             }
         }
@@ -243,6 +252,11 @@ fun SettingsScreen(
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
+                Spacer(Modifier.height(12.dp))
+                Text(
+                    "طراحی و توسعه: ${com.kamal.smsfinance.BuildInfo.DEVELOPER_NAME}",
+                    style = MaterialTheme.typography.bodyMedium
+                )
             }
         }
 
@@ -262,6 +276,14 @@ fun SettingsScreen(
             dismissButton = {
                 TextButton(onClick = { showDeleteConfirm = false }) { Text("انصراف") }
             }
+        )
+    }
+
+    if (showRescanDialog) {
+        com.kamal.smsfinance.ui.components.ScanRangeDialog(
+            dismissible = true,
+            onDismiss = { showRescanDialog = false },
+            onChoose = { days -> showRescanDialog = false; onRescan(days) }
         )
     }
 }

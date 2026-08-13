@@ -91,6 +91,9 @@ interface TransactionDao {
     @Query("UPDATE transactions SET counterpartyId = :counterpartyId WHERE id = :transactionId")
     suspend fun assignCounterparty(transactionId: Long, counterpartyId: Long?)
 
+    @Query("UPDATE transactions SET notes = :notes WHERE id = :transactionId")
+    suspend fun updateNotes(transactionId: Long, notes: String?)
+
     @Query("SELECT * FROM transactions WHERE id = :id")
     suspend fun getById(id: Long): Transaction?
 }
