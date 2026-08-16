@@ -28,6 +28,8 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.kamal.smsfinance.data.CategoryKind
+import com.kamal.smsfinance.util.normalizeDigits
+import com.kamal.smsfinance.util.toPositiveLongOrNull
 import kotlinx.coroutines.launch
 
 private enum class OnboardingStep { WELCOME, TOUR, SMALL_AMOUNT, CATEGORIES, DONE }
@@ -202,7 +204,12 @@ private fun SmallAmountStep(
             Spacer(Modifier.height(16.dp))
             OutlinedTextField(
                 value = thresholdText,
-                onValueChange = { v -> thresholdText = v; v.toLongOrNull()?.let(onThresholdChange) },
+                onValueChange = { input ->
+                    if (input.normalizeDigits().all { it.isDigit() || it == ',' || it == '٬' || it == ' ' }) {
+                        thresholdText = input
+                        input.toPositiveLongOrNull()?.let(onThresholdChange)
+                    }
+                },
                 label = { Text("زیر چند تومان؟") },
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth()

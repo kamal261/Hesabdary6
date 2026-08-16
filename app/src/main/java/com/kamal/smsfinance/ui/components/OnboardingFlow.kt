@@ -21,6 +21,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.kamal.smsfinance.data.CategoryKind
+import com.kamal.smsfinance.util.normalizeDigits
+import com.kamal.smsfinance.util.toPositiveLongOrNull
 import kotlinx.coroutines.launch
 
 /** One suggested starter category, optionally with one level of children. Kept short and
@@ -126,15 +128,15 @@ private fun StepScaffold(
 private fun WelcomeStep(onNext: () -> Unit) {
     StepScaffold(title = "به SmsFinance خوش اومدید 👋", onNext = onNext, nextLabel = "بریم") {
         Text(
-            "این برنامه پیامک‌های بانکی گوشیتون رو می‌خونه و خودکار تبدیل به دفتر مالی می‌کنه — " +
-                "دیگه لازم نیست خرج‌هاتون رو دستی بنویسید.",
+            "این برنامه پیامک‌های بانکی گوشیتون رو هنگام بازشدن بررسی می‌کنه و به دفتر مالی تبدیل می‌کنه — " +
+                "دیگه لازم نیست همه خرج‌هاتون رو دستی بنویسید.",
             style = MaterialTheme.typography.bodyLarge
         )
         Spacer(Modifier.height(16.dp))
         listOf(
-            "همه‌چیز روی خودِ گوشی شما پردازش می‌شه، هیچ‌چیزی به سرور فرستاده نمی‌شه.",
+            "همه‌چیز روی خودِ گوشی شما پردازش می‌شه و پیامک‌ها به سرور فرستاده نمی‌شن.",
             "برنامه فقط پیشنهاد می‌ده — هیچ تصمیمی (حذف، ادغام) بدون تأیید شما انجام نمی‌شه.",
-            "اگه یه پیامک رو نشناسه، هیچ‌وقت بی‌سروصدا گمش نمی‌کنه — می‌ذارتش تو یه صف که شما ببینید."
+            "اگر اجازه پیامک را ندهید، برنامه هنوز برای ثبت دستی و گزارش‌گیری قابل استفاده است."
         ).forEach { line ->
             Row(verticalAlignment = Alignment.Top, modifier = Modifier.padding(vertical = 4.dp)) {
                 Text("•  ", style = MaterialTheme.typography.bodyLarge)
@@ -178,7 +180,7 @@ private fun SmallAmountStep(onNext: (enabled: Boolean, threshold: Long) -> Unit,
 
     StepScaffold(
         title = "خرج‌های خیلی کوچیک",
-        onNext = { onNext(enabled, thresholdText.toLongOrNull() ?: 20000L) },
+        onNext = { onNext(enabled, thresholdText.toPositiveLongOrNull() ?: 20000L) },
         onBack = onBack
     ) {
         Text(
@@ -197,7 +199,7 @@ private fun SmallAmountStep(onNext: (enabled: Boolean, threshold: Long) -> Unit,
             Spacer(Modifier.height(16.dp))
             OutlinedTextField(
                 value = thresholdText,
-                onValueChange = { if (it.all(Char::isDigit)) thresholdText = it },
+                onValueChange = { input -> if (input.normalizeDigits().all { it.isDigit() || it == ',' || it == '٬' || it == ' ' }) thresholdText = input },
                 label = { Text("سقف مبلغ (تومان)") },
                 modifier = Modifier.fillMaxWidth()
             )

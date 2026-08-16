@@ -7,14 +7,11 @@ import androidx.room.PrimaryKey
 /** Which of the four core buckets a category belongs to; custom categories can use any kind. */
 enum class CategoryKind { INCOME, EXPENSE, DEBT_COLLECTION, DEBT_PAYMENT }
 
-// SmsFinance file version: 2 — added parentId for one level of subcategories (e.g. "هزینه" ->
-// "خواروبار" -> "سوپرمارکت"). Deliberately one level, not an arbitrary-depth tree: a parent
-// category with a non-null parentId of its own is not supported by the UI or by
-// CategoryDao.getSubcategories -- this keeps the picker and the categories screen simple
-// (matches the product's "سادگی بر امکانات" principle) while still letting the user group
-// related categories. No DB-level foreign key constraint is declared on purpose (see the
-// migration in AppDatabase.kt for why); TransactionRepository.deleteCategory enforces the
-// invariant instead by re-parenting any children to top-level before deleting.
+// SmsFinance file version: 3 — parentId forms an arbitrary-depth category tree. The database
+// keeps the relationship lightweight so the app can build and validate paths in Kotlin, while
+// the UI exposes the path to the user instead of hiding the hierarchy. No DB-level foreign key
+// constraint is declared on purpose; TransactionRepository.deleteCategory preserves children
+// by promoting direct children to the root before deleting a parent.
 @Entity(tableName = "categories", indices = [Index("parentId")])
 data class Category(
     @PrimaryKey(autoGenerate = true)

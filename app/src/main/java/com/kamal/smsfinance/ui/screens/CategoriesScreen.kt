@@ -1,8 +1,3 @@
-// SmsFinance file version: 2 — one level of subcategories: categories are grouped by parent
-// and rendered indented underneath it; AddCategoryDialog lets you pick a top-level category of
-// the same kind as the parent (or none, for a top-level category). Deleting a category with
-// children is allowed -- TransactionRepository.deleteCategory re-parents them to top-level
-// first, so this screen just shows a heads-up dialog rather than blocking the delete.
 package com.kamal.smsfinance.ui.screens
 
 import androidx.compose.foundation.layout.*
@@ -29,10 +24,16 @@ fun CategoriesScreen(
 ) {
     var showAddDialog by remember { mutableStateOf(false) }
     var pendingDelete by remember { mutableStateOf<Category?>(null) }
+    val byParent = remember(categories) { categories.groupBy { it.parentId } }
 
-    val topLevel = remember(categories) { categories.filter { it.parentId == null } }
-    val childrenByParent = remember(categories) {
-        categories.filter { it.parentId != null }.groupBy { it.parentId }
+    fun flatten(parentId: Long?, depth: Int = 0, result: MutableList<Pair<Category, Int>>) {
+        byParent[parentId].orEmpty().sortedWith(compareByDescending<Category> { it.isDefault }.thenBy { it.name }).forEach { cat ->
+            result += cat to depth
+            flatten(cat.id, depth + 1, result)
+        }
+    }
+    val displayCategories = remember(categories) {
+        mutableListOf<Pair<Category, Int>>().also { flatten(null, result = it) }
     }
 
     Scaffold(
@@ -53,22 +54,13 @@ fun CategoriesScreen(
             contentPadding = PaddingValues(16.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            items(topLevel, key = { it.id }) { cat ->
-                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    CategoryRow(
-                        category = cat,
-                        childCount = childrenByParent[cat.id]?.size ?: 0,
-                        onDelete = { pendingDelete = cat }
-                    )
-                    childrenByParent[cat.id]?.forEach { child ->
-                        CategoryRow(
-                            category = child,
-                            childCount = 0,
-                            indented = true,
-                            onDelete = { pendingDelete = child }
-                        )
-                    }
-                }
+            items(displayCategories, key = { it.first.id }) { (cat, depth) ->
+                CategoryRow(
+                    category = cat,
+                    childCount = byParent[cat.id]?.size ?: 0,
+                    depth = depth,
+                    onDelete = { pendingDelete = cat }
+                )
             }
             item { Spacer(Modifier.height(72.dp)) }
         }
@@ -76,7 +68,7 @@ fun CategoriesScreen(
 
     if (showAddDialog) {
         AddCategoryDialog(
-            topLevelCategories = topLevel,
+            categories = categories,
             onDismiss = { showAddDialog = false },
             onConfirm = { name, kind, parentId ->
                 onAdd(name, kind, parentId)
@@ -86,16 +78,15 @@ fun CategoriesScreen(
     }
 
     pendingDelete?.let { cat ->
-        val childCount = childrenByParent[cat.id]?.size ?: 0
+        val childCount = byParent[cat.id]?.size ?: 0
         AlertDialog(
             onDismissRequest = { pendingDelete = null },
             title = { Text("حذف «${cat.name}»؟") },
             text = {
                 Text(
                     if (childCount > 0)
-                        "این دسته $childCount زیرشاخه دارد که پس از حذف، به سطح اصلی منتقل می‌شوند."
-                    else
-                        "این عمل قابل بازگشت نیست."
+                        "این دسته $childCount زیرشاخه مستقیم دارد. زیرشاخه‌ها حفظ می‌شوند و به سطح اصلی منتقل خواهند شد."
+                    else "این عمل قابل بازگشت نیست."
                 )
             },
             confirmButton = {
@@ -110,12 +101,10 @@ fun CategoriesScreen(
 private fun CategoryRow(
     category: Category,
     childCount: Int,
-    indented: Boolean = false,
+    depth: Int,
     onDelete: () -> Unit
 ) {
-    ElevatedCard(
-        modifier = Modifier.fillMaxWidth().padding(start = if (indented) 24.dp else 0.dp)
-    ) {
+    ElevatedCard(modifier = Modifier.fillMaxWidth().padding(start = (depth * 20).dp)) {
         Row(
             modifier = Modifier.fillMaxWidth().padding(16.dp),
             verticalAlignment = Alignment.CenterVertically,
@@ -123,11 +112,11 @@ private fun CategoryRow(
         ) {
             Column {
                 Text(
-                    (if (indented) "↳ " else "") + category.name,
-                    style = if (indented) MaterialTheme.typography.bodyLarge else MaterialTheme.typography.titleMedium
+                    (if (depth > 0) "↳ " else "") + category.name,
+                    style = if (depth > 0) MaterialTheme.typography.bodyLarge else MaterialTheme.typography.titleMedium
                 )
                 Text(
-                    kindLabel(category.kind) + if (childCount > 0) " · $childCount زیرشاخه" else "",
+                    kindLabel(category.kind) + if (childCount > 0) " · $childCount زیرشاخه مستقیم" else "",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -150,17 +139,27 @@ private fun kindLabel(kind: CategoryKind): String = when (kind) {
 
 @Composable
 private fun AddCategoryDialog(
-    topLevelCategories: List<Category>,
+    categories: List<Category>,
     onDismiss: () -> Unit,
     onConfirm: (String, CategoryKind, Long?) -> Unit
 ) {
     var name by remember { mutableStateOf("") }
     var kind by remember { mutableStateOf(CategoryKind.EXPENSE) }
     var parentId by remember { mutableStateOf<Long?>(null) }
+    val byId = remember(categories) { categories.associateBy { it.id } }
 
-    // Only top-level categories of the currently-selected kind can be a parent -- keeps
-    // nesting to exactly one level and keeps a subcategory's kind consistent with its parent's.
-    val eligibleParents = remember(topLevelCategories, kind) { topLevelCategories.filter { it.kind == kind } }
+    fun pathOf(category: Category): String {
+        val path = mutableListOf<String>()
+        val visited = mutableSetOf<Long>()
+        var current: Category? = category
+        while (current != null && visited.add(current.id)) {
+            path += current.name
+            current = current.parentId?.let { byId[it] }
+        }
+        return path.asReversed().joinToString(" / ")
+    }
+
+    val eligibleParents = remember(categories, kind) { categories.filter { it.kind == kind }.sortedBy { pathOf(it) } }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -182,18 +181,16 @@ private fun AddCategoryDialog(
                         }
                     }
                 }
-                if (eligibleParents.isNotEmpty()) {
-                    Column {
-                        Text("زیرشاخه‌ی کدام دسته؟ (اختیاری)", style = MaterialTheme.typography.bodyMedium)
+                Column {
+                    Text("زیرمجموعه کدام دسته باشد؟ (اختیاری)", style = MaterialTheme.typography.bodyMedium)
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        RadioButton(selected = parentId == null, onClick = { parentId = null })
+                        Text("بدون والد")
+                    }
+                    eligibleParents.forEach { parent ->
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            RadioButton(selected = parentId == null, onClick = { parentId = null })
-                            Text("بدون والد (دسته مستقل)")
-                        }
-                        eligibleParents.forEach { p ->
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                RadioButton(selected = parentId == p.id, onClick = { parentId = p.id })
-                                Text(p.name)
-                            }
+                            RadioButton(selected = parentId == parent.id, onClick = { parentId = parent.id })
+                            Text(pathOf(parent))
                         }
                     }
                 }
@@ -203,9 +200,7 @@ private fun AddCategoryDialog(
             TextButton(
                 onClick = { if (name.isNotBlank()) onConfirm(name.trim(), kind, parentId) },
                 enabled = name.isNotBlank()
-            ) {
-                Text("افزودن")
-            }
+            ) { Text("افزودن") }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("انصراف") } }
     )

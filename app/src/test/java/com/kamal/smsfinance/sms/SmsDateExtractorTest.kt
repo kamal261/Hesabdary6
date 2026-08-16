@@ -1,9 +1,9 @@
 package com.kamal.smsfinance.sms
 
 import com.kamal.smsfinance.util.JalaliDate
-import org.junit.jupiter.api.Assertions.assertEquals
-import org.junit.jupiter.api.Assertions.assertNotEquals
-import org.junit.jupiter.api.Test
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotEquals
+import org.junit.Test
 
 /**
  * Tests for SmsDateExtractor.
@@ -55,7 +55,7 @@ class SmsDateExtractorTest {
     @Test
     fun `jalali date with surrounding clock time uses the embedded time`() {
         val result = SmsDateExtractor.extract("تاریخ: 1404/05/12 ساعت 14:30 مبلغ 100,000", 0L)
-        assertEquals("1404/05/12 - 14:30", JalaliDate.formatDateTime(result))
+        assertEquals("۱۴۰۴/۰۵/۱۲ - ۱۴:۳۰", JalaliDate.formatDateTime(result))
     }
 
     @Test

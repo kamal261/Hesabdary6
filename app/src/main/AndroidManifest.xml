@@ -4,14 +4,11 @@
 
     <!-- SMS permissions -->
     <uses-permission android:name="android.permission.READ_SMS" />
-    <uses-permission android:name="android.permission.RECEIVE_SMS" />
 
     <!-- Network only used for the OPTIONAL Google Sheets webhook export -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 
-    <!-- Needed on some OEMs to keep the SMS receiver reliable -->
-    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 
     <application
         android:name=".SmsFinanceApp"
@@ -33,14 +30,15 @@
             </intent-filter>
         </activity>
 
-        <!-- Listens for incoming bank SMS in real time -->
         <receiver
-            android:name=".sms.SmsReceiver"
-            android:exported="true"
-            android:permission="android.permission.BROADCAST_SMS">
-            <intent-filter android:priority="999">
-                <action android:name="android.provider.Telephony.SMS_RECEIVED" />
+            android:name=".widget.FinanceWidgetProvider"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
             </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/finance_widget_info" />
         </receiver>
 
         <!-- FileProvider for sharing exported CSV/backup files -->

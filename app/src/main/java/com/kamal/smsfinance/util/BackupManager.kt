@@ -26,8 +26,8 @@ import java.io.File
  * needed). Backups are plain files under getExternalFilesDir("backups") so
  * the user can move/copy them manually, or restore via a content:// Uri
  * (e.g. picked from a file manager or cloud-synced folder, including a
- * locally-synced Google Drive folder). Covers all five tables: transactions,
- * categories, counterparties, checks, smart rules.
+ * locally-synced Google Drive folder). Covers six tables: transactions,
+ * categories, counterparties, counterparty reminders, checks and smart rules.
  *
  * "version" here is a BACKUP-FORMAT version, intentionally decoupled from
  * Room's schema version (which changes independently as columns are added).
@@ -42,13 +42,13 @@ import java.io.File
  * (case-insensitive) so restoring never creates duplicate rows -- including
  * duplicates of the seeded default categories. Every cross-table reference
  * (transactions/checks/rules -> categoryId/counterpartyId, checks ->
- * settledTransactionId) is remapped through an old-id -> new-id table built
+ * settledTransactionId, transactions -> linkedCheckId, reminders -> counterpartyId) is remapped through old-id -> new-id tables built
  * while restoring categories/counterparties/transactions, so relationships
  * stay correct regardless of whether the target database was empty or not.
  */
 object BackupManager {
 
-    private const val BACKUP_FORMAT_VERSION = 3
+    private const val BACKUP_FORMAT_VERSION = 4
 
     private fun String?.orNull(): Any = this ?: JSONObject.NULL
     private fun Long?.orNull(): Any = this ?: JSONObject.NULL
@@ -60,6 +60,7 @@ object BackupManager {
     /** Wipes everything a restore would repopulate, EXCEPT categories (deduped by name instead, so user-added custom categories aren't lost). */
     suspend fun wipeForRestore(db: AppDatabase) = withContext(Dispatchers.IO) {
         db.transactionDao().deleteAll()
+        db.counterpartyReminderDao().getAllOnce().forEach { db.counterpartyReminderDao().delete(it) }
         db.counterpartyDao().getAllOnce().forEach { db.counterpartyDao().delete(it) }
         db.checkDao().getAllOnce().forEach { db.checkDao().delete(it) }
         db.smartRuleDao().getAllRulesOnce().forEach { db.smartRuleDao().deleteRule(it) }
@@ -86,6 +87,8 @@ object BackupManager {
                     put("categoryId", t.categoryId.orNull())
                     put("counterpartyId", t.counterpartyId.orNull())
                     put("isIndirectSettlement", t.isIndirectSettlement)
+                    put("transferGroupId", t.transferGroupId.orNull())
+                    put("linkedCheckId", t.linkedCheckId.orNull())
                     put("notes", t.notes.orNull())
                 })
             }
@@ -133,6 +136,21 @@ object BackupManager {
             }
         })
 
+        root.put("counterpartyReminders", JSONArray().apply {
+            db.counterpartyReminderDao().getAllOnce().forEach { reminder ->
+                put(JSONObject().apply {
+                    put("id", reminder.id)
+                    put("counterpartyId", reminder.counterpartyId)
+                    put("title", reminder.title)
+                    put("details", reminder.details.orNull())
+                    put("dueAt", reminder.dueAt.orNull())
+                    put("isDone", reminder.isDone)
+                    put("createdAt", reminder.createdAt)
+                    put("completedAt", reminder.completedAt.orNull())
+                })
+            }
+        })
+
         root.put("smartRules", JSONArray().apply {
             db.smartRuleDao().getAllRulesOnce().forEach { rule ->
                 put(JSONObject().apply {
@@ -172,45 +190,59 @@ object BackupManager {
                 val categoryIdMap = mutableMapOf<Long, Long>()
                 val counterpartyIdMap = mutableMapOf<Long, Long>()
                 val transactionIdMap = mutableMapOf<Long, Long>()
+                val checkIdMap = mutableMapOf<Long, Long>()
+                val transferGroupIdMap = mutableMapOf<Long, Long>()
 
                 if (root.has("categories")) {
                     val arr = root.getJSONArray("categories")
-                    val entries = (0 until arr.length()).map { arr.getJSONObject(it) }
+                    val pending = (0 until arr.length()).map { arr.getJSONObject(it) }.toMutableList()
 
-                    // Pass 1: top-level categories (no parentId in the backup) -- must exist
-                    // before any child can be resolved and linked to them.
-                    entries.filter { it.isNull("parentId") || !it.has("parentId") }.forEach { o ->
-                        val oldId = o.getLong("id")
-                        val name = o.getString("name")
-                        val existing = db.categoryDao().getAllOnce().firstOrNull { it.name.equals(name, ignoreCase = true) }
-                        val newId = existing?.id ?: db.categoryDao().insert(
-                            Category(
-                                name = name,
-                                kind = CategoryKind.valueOf(o.getString("kind")),
-                                isDefault = o.optBoolean("isDefault", false)
-                            )
-                        )
-                        categoryIdMap[oldId] = newId
-                    }
+                    // Resolve parents level by level. This supports arbitrary depth instead of
+                    // assuming that every category is either a root or a direct child.
+                    while (pending.isNotEmpty()) {
+                        val sizeBefore = pending.size
+                        val iterator = pending.iterator()
+                        while (iterator.hasNext()) {
+                            val o = iterator.next()
+                            val oldId = o.getLong("id")
+                            val oldParentId = o.optLongOrNull("parentId")
+                            if (oldParentId != null && !categoryIdMap.containsKey(oldParentId)) continue
 
-                    // Pass 2: subcategories. The backup's own "parentId" is an OLD id -- resolve
-                    // it through categoryIdMap (built in pass 1) to find the REAL parent in this
-                    // database, not by re-matching names, which is redundant now that pass 1
-                    // already recorded every top-level category's new id.
-                    entries.filterNot { it.isNull("parentId") || !it.has("parentId") }.forEach { o ->
-                        val oldId = o.getLong("id")
-                        val name = o.getString("name")
-                        val existing = db.categoryDao().getAllOnce().firstOrNull { it.name.equals(name, ignoreCase = true) }
-                        val resolvedParentId = categoryIdMap[o.getLong("parentId")]
-                        val newId = existing?.id ?: db.categoryDao().insert(
-                            Category(
-                                name = name,
-                                kind = CategoryKind.valueOf(o.getString("kind")),
-                                isDefault = o.optBoolean("isDefault", false),
-                                parentId = resolvedParentId
+                            val name = o.getString("name")
+                            val kind = CategoryKind.valueOf(o.getString("kind"))
+                            val existing = db.categoryDao().getAllOnce().firstOrNull {
+                                it.name.equals(name, ignoreCase = true) && it.kind == kind &&
+                                    it.parentId == oldParentId?.let { parent -> categoryIdMap[parent] }
+                            }
+                            val newId = existing?.id ?: db.categoryDao().insert(
+                                Category(
+                                    name = name,
+                                    kind = kind,
+                                    isDefault = o.optBoolean("isDefault", false),
+                                    parentId = oldParentId?.let { parent -> categoryIdMap[parent] }
+                                )
                             )
-                        )
-                        categoryIdMap[oldId] = newId
+                            if (newId > 0) {
+                                categoryIdMap[oldId] = newId
+                                iterator.remove()
+                            }
+                        }
+
+                        // A malformed/cyclic backup must not block all remaining data. The
+                        // unresolved node is restored as a root, with its original id mapped.
+                        if (pending.size == sizeBefore) {
+                            val o = pending.removeAt(0)
+                            val oldId = o.getLong("id")
+                            val newId = db.categoryDao().insert(
+                                Category(
+                                    name = o.getString("name"),
+                                    kind = CategoryKind.valueOf(o.getString("kind")),
+                                    isDefault = o.optBoolean("isDefault", false),
+                                    parentId = null
+                                )
+                            )
+                            categoryIdMap[oldId] = newId
+                        }
                     }
                 }
 
@@ -239,6 +271,19 @@ object BackupManager {
                 var restored = 0
                 if (root.has("transactions")) {
                     val arr = root.getJSONArray("transactions")
+                    val oldTransferGroups = (0 until arr.length())
+                        .mapNotNull { arr.getJSONObject(it).optLongOrNull("transferGroupId") }
+                        .distinct()
+                    val occupiedTransferGroups = db.transactionDao().getAllOnce()
+                        .mapNotNull { it.transferGroupId }
+                        .toSet()
+                    transferGroupIdMap.putAll(
+                        TransferGroupIdRemapper.createMapping(
+                            oldGroupIds = oldTransferGroups,
+                            occupiedGroupIds = occupiedTransferGroups,
+                            firstCandidate = System.currentTimeMillis()
+                        )
+                    )
                     for (i in 0 until arr.length()) {
                         val o = arr.getJSONObject(i)
                         val oldId = o.getLong("id")
@@ -256,6 +301,9 @@ object BackupManager {
                                 categoryId = o.optLongOrNull("categoryId")?.let { categoryIdMap[it] },
                                 counterpartyId = o.optLongOrNull("counterpartyId")?.let { counterpartyIdMap[it] },
                                 isIndirectSettlement = o.optBoolean("isIndirectSettlement", false),
+                                transferGroupId = o.optLongOrNull("transferGroupId")?.let { transferGroupIdMap[it] },
+                                // linkedCheckId is applied after checks are restored and remapped.
+                                linkedCheckId = null,
                                 notes = o.optStringOrNull("notes")
                             )
                         )
@@ -268,7 +316,7 @@ object BackupManager {
                     val arr = root.getJSONArray("checks")
                     for (i in 0 until arr.length()) {
                         val o = arr.getJSONObject(i)
-                        db.checkDao().insert(
+                        val newCheckId = db.checkDao().insert(
                             Check(
                                 type = CheckType.valueOf(o.getString("type")),
                                 counterpartyId = o.optLongOrNull("counterpartyId")?.let { counterpartyIdMap[it] },
@@ -280,6 +328,40 @@ object BackupManager {
                                 description = o.optStringOrNull("description"),
                                 settledTransactionId = o.optLongOrNull("settledTransactionId")?.let { transactionIdMap[it] },
                                 createdAt = o.optLong("createdAt", System.currentTimeMillis())
+                            )
+                        )
+                        checkIdMap[o.getLong("id")] = newCheckId
+                    }
+                }
+
+                // Checks are inserted after transactions, so restore the transaction -> check
+                // links only after both old-id maps are complete.
+                if (root.has("transactions")) {
+                    val arr = root.getJSONArray("transactions")
+                    for (i in 0 until arr.length()) {
+                        val o = arr.getJSONObject(i)
+                        val newTransactionId = transactionIdMap[o.getLong("id")]
+                        val newCheckId = o.optLongOrNull("linkedCheckId")?.let { checkIdMap[it] }
+                        if (newTransactionId != null && newCheckId != null) {
+                            db.transactionDao().linkCheck(newTransactionId, newCheckId)
+                        }
+                    }
+                }
+
+                if (root.has("counterpartyReminders")) {
+                    val arr = root.getJSONArray("counterpartyReminders")
+                    for (i in 0 until arr.length()) {
+                        val o = arr.getJSONObject(i)
+                        val counterpartyId = counterpartyIdMap[o.getLong("counterpartyId")] ?: continue
+                        db.counterpartyReminderDao().insert(
+                            CounterpartyReminder(
+                                counterpartyId = counterpartyId,
+                                title = o.getString("title"),
+                                details = o.optStringOrNull("details"),
+                                dueAt = o.optLongOrNull("dueAt"),
+                                isDone = o.optBoolean("isDone", false),
+                                createdAt = o.optLong("createdAt", System.currentTimeMillis()),
+                                completedAt = o.optLongOrNull("completedAt")
                             )
                         )
                     }

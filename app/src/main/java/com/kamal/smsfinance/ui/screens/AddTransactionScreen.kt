@@ -25,6 +25,8 @@ import com.kamal.smsfinance.data.TransactionType
 import com.kamal.smsfinance.ui.components.CategoryPicker
 import com.kamal.smsfinance.ui.theme.GreenIncome
 import com.kamal.smsfinance.ui.theme.RedExpense
+import com.kamal.smsfinance.util.normalizeDigits
+import com.kamal.smsfinance.util.toPositiveLongOrNull
 import java.util.Calendar
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -52,10 +54,11 @@ fun AddTransactionScreen(
     var isIndirectSettlement by remember { mutableStateOf(false) }
     var showDetails by remember { mutableStateOf(false) }
 
-    val amountValid = amountText.toLongOrNull()?.let { it > 0 } == true
+    val amountValue = amountText.toPositiveLongOrNull()
+    val amountValid = amountValue?.let { it > 0 } == true
 
     fun save() {
-        val amount = amountText.toLong()
+        val amount = amountValue ?: return
         val date = Calendar.getInstance().timeInMillis
         if (isIndirectSettlement) {
             onSaveIndirectSettlement(amount, type, selectedCounterparty?.id, description, date, selectedCategory?.id)
@@ -85,7 +88,7 @@ fun AddTransactionScreen(
 
             OutlinedTextField(
                 value = amountText,
-                onValueChange = { input -> if (input.all { it.isDigit() }) amountText = input },
+                onValueChange = { input -> if (input.normalizeDigits().all { it.isDigit() || it == ',' || it == '٬' || it == ' ' }) amountText = input },
                 label = { Text("مبلغ (تومان)") },
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                 isError = amountText.isNotEmpty() && !amountValid,

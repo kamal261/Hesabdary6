@@ -1,3 +1,4 @@
 <resources>
     <string name="app_name">مدیریت مالی پیامکی</string>
+    <string name="widget_description">خلاصه محلی وضعیت مالی امروز؛ داده تا آخرین بررسی برنامه تازه است.</string>
 </resources>

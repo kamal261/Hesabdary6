@@ -21,9 +21,13 @@ jobs:
         distribution: 'temurin'
         java-version: '17'
 
-    - name: ساخت APK
+    - name: اجرای تست‌های واحد
       run: |
         chmod +x gradlew
+        ./gradlew testDebugUnitTest --stacktrace
+
+    - name: ساخت APK
+      run: |
         ./gradlew assembleDebug
 
     - name: آپلود فایل APK

@@ -14,11 +14,14 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
-import com.kamal.smsfinance.data.*
-import java.text.SimpleDateFormat
+import com.kamal.smsfinance.data.Check
+import com.kamal.smsfinance.data.CheckStatus
+import com.kamal.smsfinance.data.CheckType
+import com.kamal.smsfinance.data.Counterparty
+import com.kamal.smsfinance.util.JalaliDate
+import com.kamal.smsfinance.util.normalizeDigits
+import com.kamal.smsfinance.util.toPositiveLongOrNull
 import java.util.Calendar
-import java.util.Date
-import java.util.Locale
 import java.util.concurrent.TimeUnit
 
 private enum class CheckFilter(val label: String) { ALL("همه"), PENDING("در انتظار"), CLEARED("تسویه شده"), BOUNCED("برگشتی") }
@@ -119,7 +122,7 @@ private fun DueSoonBanner(dueSoon: List<Check>, counterpartyById: Map<Long, Coun
             }
             Spacer(Modifier.height(8.dp))
             dueSoon.take(3).forEach { chk ->
-                val dateStr = SimpleDateFormat("yyyy/MM/dd", Locale.US).format(Date(chk.dueDate))
+                val dateStr = JalaliDate.formatDatePersian(chk.dueDate)
                 val name = chk.counterpartyId?.let { counterpartyById[it]?.name } ?: "بدون طرف حساب"
                 Text(
                     "$name — ${"%,d".format(chk.amountToman)} تومان — سررسید $dateStr",
@@ -145,7 +148,17 @@ private fun CheckCard(
         CheckStatus.CLEARED -> "تسویه شده"
         CheckStatus.BOUNCED -> "برگشتی"
     }
-    val dueDateStr = remember(check.dueDate) { SimpleDateFormat("yyyy/MM/dd", Locale.US).format(Date(check.dueDate)) }
+    val dueDateStr = remember(check.dueDate) { JalaliDate.formatDatePersian(check.dueDate) }
+    val daysUntilDue = TimeUnit.MILLISECONDS.toDays(check.dueDate - System.currentTimeMillis())
+    val nextAction = when (check.status) {
+        CheckStatus.CLEARED -> "قدم بعدی: تراکنش مرتبط را بررسی کنید"
+        CheckStatus.BOUNCED -> "قدم بعدی: پیگیری و ثبت یادداشت"
+        CheckStatus.PENDING -> when {
+            daysUntilDue <= 0L -> "قدم بعدی: وضعیت این چک را بررسی کنید"
+            daysUntilDue <= 7L -> "قدم بعدی: برای سررسید نزدیک آماده شوید"
+            else -> "قدم بعدی: منتظر رسید یا پیامک باشید"
+        }
+    }
 
     ElevatedCard(modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp)) {
@@ -159,6 +172,11 @@ private fun CheckCard(
             Spacer(Modifier.height(4.dp))
             Text("سررسید: $dueDateStr", style = MaterialTheme.typography.bodyMedium)
             Text("وضعیت: $statusLabel", style = MaterialTheme.typography.bodyMedium)
+            Text(
+                nextAction,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.primary
+            )
             check.description?.let { Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant) }
 
             if (check.status == CheckStatus.PENDING) {
@@ -190,7 +208,8 @@ private fun AddCheckDialog(
     var selectedCounterparty by remember { mutableStateOf<Counterparty?>(null) }
     var expanded by remember { mutableStateOf(false) }
 
-    val amountValid = amountText.toLongOrNull()?.let { it > 0 } == true
+    val amountValue = amountText.toPositiveLongOrNull()
+    val amountValid = amountValue?.let { it > 0 } == true
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -203,7 +222,7 @@ private fun AddCheckDialog(
                 }
                 OutlinedTextField(
                     value = amountText,
-                    onValueChange = { if (it.all { c -> c.isDigit() }) amountText = it },
+                    onValueChange = { input -> if (input.normalizeDigits().all { it.isDigit() || it == ',' || it == '٬' || it == ' ' }) amountText = input },
                     label = { Text("مبلغ (تومان)") },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                     isError = amountText.isNotEmpty() && !amountValid,
@@ -211,14 +230,14 @@ private fun AddCheckDialog(
                 )
                 OutlinedTextField(
                     value = daysUntilDue,
-                    onValueChange = { if (it.all { c -> c.isDigit() }) daysUntilDue = it },
+                    onValueChange = { input -> if (input.normalizeDigits().all(Char::isDigit)) daysUntilDue = input },
                     label = { Text("روز تا سررسید") },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                     modifier = Modifier.fillMaxWidth()
                 )
                 OutlinedTextField(
                     value = reminderDays,
-                    onValueChange = { if (it.all { c -> c.isDigit() }) reminderDays = it },
+                    onValueChange = { input -> if (input.normalizeDigits().all(Char::isDigit)) reminderDays = input },
                     label = { Text("یادآوری چند روز قبل از سررسید") },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                     modifier = Modifier.fillMaxWidth()
@@ -253,15 +272,15 @@ private fun AddCheckDialog(
             TextButton(
                 enabled = amountValid,
                 onClick = {
-                    val days = daysUntilDue.toIntOrNull() ?: 30
+                    val days = daysUntilDue.toPositiveLongOrNull()?.toInt() ?: 30
                     val dueDate = Calendar.getInstance().apply { add(Calendar.DAY_OF_YEAR, days) }.timeInMillis
                     onConfirm(
                         Check(
                             type = type,
                             counterpartyId = selectedCounterparty?.id,
-                            amountToman = amountText.toLong(),
+                            amountToman = amountValue ?: 0L,
                             dueDate = dueDate,
-                            reminderDays = reminderDays.toIntOrNull() ?: 3,
+                            reminderDays = reminderDays.toPositiveLongOrNull()?.toInt() ?: 3,
                             description = description.ifBlank { null }
                         )
                     )

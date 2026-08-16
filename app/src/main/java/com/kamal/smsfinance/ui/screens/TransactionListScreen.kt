@@ -18,15 +18,14 @@ import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.kamal.smsfinance.data.Category
+import com.kamal.smsfinance.data.SmartSuggestion
 import com.kamal.smsfinance.data.Transaction
 import com.kamal.smsfinance.data.TransactionType
 import com.kamal.smsfinance.ui.components.CategoryPicker
 import com.kamal.smsfinance.ui.components.TodayDashboardCard
 import com.kamal.smsfinance.ui.theme.GreenIncome
 import com.kamal.smsfinance.ui.theme.RedExpense
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
+import com.kamal.smsfinance.util.JalaliDate
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -37,7 +36,18 @@ fun TransactionListScreen(
     recurringIds: Set<Long>,
     isLoading: Boolean,
     unidentifiedSmsCount: Int,
+    uncategorizedCount: Int = 0,
     dashboard: DashboardData,
+    smartSuggestions: List<SmartSuggestion> = emptyList(),
+    lastScanTimestamp: Long? = null,
+    backupReminderVisible: Boolean = false,
+    lastBackupTimestamp: Long? = null,
+    smsPermissionGranted: Boolean = true,
+    onCreateBackup: () -> Unit = {},
+    onSnoozeBackupReminder: () -> Unit = {},
+    onRequestSmsPermission: () -> Unit = {},
+    onAcceptSuggestion: (SmartSuggestion) -> Unit = {},
+    onRejectSuggestion: (SmartSuggestion) -> Unit = {},
     onScanInbox: () -> Unit,
     onDelete: (Transaction) -> Unit,
     onAddManual: () -> Unit,
@@ -86,8 +96,47 @@ fun TransactionListScreen(
                     )
                 }
 
+                if (backupReminderVisible) {
+                    item {
+                        com.kamal.smsfinance.ui.components.BackupReminderBanner(
+                            lastBackupTimestamp = lastBackupTimestamp,
+                            onCreateBackup = onCreateBackup,
+                            onSnooze = onSnoozeBackupReminder
+                        )
+                    }
+                }
+
+                if (!smsPermissionGranted) {
+                    item {
+                        com.kamal.smsfinance.ui.components.SmsPermissionBanner(
+                            onRequestPermission = onRequestSmsPermission
+                        )
+                    }
+                }
+
+                item {
+                    com.kamal.smsfinance.ui.components.ReviewSummaryCard(
+                        uncategorizedCount = uncategorizedCount,
+                        unidentifiedSmsCount = unidentifiedSmsCount,
+                        suggestionCount = smartSuggestions.size,
+                        checksDueSoonCount = dashboard.checksDueSoonCount,
+                        onOpenUnidentifiedSms = onOpenUnidentifiedSms,
+                        onOpenChecks = onOpenChecks
+                    )
+                }
+
                 if (unidentifiedSmsCount > 0) {
                     item { UnidentifiedSmsBanner(count = unidentifiedSmsCount, onClick = onOpenUnidentifiedSms) }
+                }
+
+                if (smartSuggestions.isNotEmpty()) {
+                    item {
+                        SmartSuggestionsCard(
+                            suggestions = smartSuggestions,
+                            onAccept = onAcceptSuggestion,
+                            onReject = onRejectSuggestion
+                        )
+                    }
                 }
 
                 item {
@@ -103,7 +152,11 @@ fun TransactionListScreen(
 
                 item {
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        OutlinedButton(onClick = onScanInbox, enabled = !isLoading, modifier = Modifier.weight(1f)) {
+                        OutlinedButton(
+                            onClick = onScanInbox,
+                            enabled = !isLoading && smsPermissionGranted,
+                            modifier = Modifier.weight(1f)
+                        ) {
                             if (isLoading) {
                                 CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
                                 Spacer(Modifier.width(8.dp))
@@ -111,7 +164,7 @@ fun TransactionListScreen(
                             } else {
                                 Icon(Icons.Filled.Refresh, contentDescription = null, modifier = Modifier.size(18.dp))
                                 Spacer(Modifier.width(8.dp))
-                                Text("اسکن پیامک‌ها")
+                                Text(if (smsPermissionGranted) "اسکن پیامک‌ها" else "اسکن پیامک‌ها (اجازه لازم است)")
                             }
                         }
                         FilterChip(
@@ -120,6 +173,14 @@ fun TransactionListScreen(
                             label = { Text("فقط بدون دسته") }
                         )
                     }
+                }
+                item {
+                    Text(
+                        lastScanTimestamp?.let { "آخرین بررسی پیامک‌ها: ${JalaliDate.formatDateTime(it)}" }
+                            ?: "هنوز پیامکی بررسی نشده است",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                 }
 
                 if (filtered.isEmpty()) {
@@ -174,6 +235,34 @@ fun TransactionListScreen(
                 ruleSuggestionFor = null
             }
         )
+    }
+}
+
+@Composable
+private fun SmartSuggestionsCard(
+    suggestions: List<SmartSuggestion>,
+    onAccept: (SmartSuggestion) -> Unit,
+    onReject: (SmartSuggestion) -> Unit
+) {
+    ElevatedCard(modifier = Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("پیشنهادهای هوشمند", style = MaterialTheme.typography.titleMedium)
+            Text(
+                "این‌ها فقط پیشنهاد هستند؛ تا وقتی شما تأیید نکنید چیزی تغییر نمی‌کند.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            suggestions.take(3).forEach { suggestion ->
+                HorizontalDivider()
+                Text(suggestion.title, fontWeight = FontWeight.SemiBold)
+                Text(suggestion.explanation, style = MaterialTheme.typography.bodySmall)
+                Text("اطمینان تقریبی: ${(suggestion.confidence * 100).toInt()}٪", style = MaterialTheme.typography.labelSmall)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(onClick = { onAccept(suggestion) }) { Text("تأیید") }
+                    OutlinedButton(onClick = { onReject(suggestion) }) { Text("رد") }
+                }
+            }
+        }
     }
 }
 
@@ -268,7 +357,7 @@ private fun TransactionDetailDialog(
     val isIncome = transaction.type == TransactionType.INCOME
     val amountColor = if (isIncome) GreenIncome else RedExpense
     val dateStr = remember(transaction.date) {
-        SimpleDateFormat("yyyy/MM/dd - HH:mm:ss", Locale.US).format(Date(transaction.date))
+        JalaliDate.formatDateTime(transaction.date)
     }
     val fullText = transaction.rawSms?.takeIf { it.isNotBlank() } ?: transaction.description
     val clipboard = LocalClipboardManager.current
@@ -404,7 +493,7 @@ private fun TransactionCard(
     val isIncome = txn.type == TransactionType.INCOME
     val amountColor = if (isIncome) GreenIncome else RedExpense
     val dateStr = remember(txn.date) {
-        SimpleDateFormat("yyyy/MM/dd - HH:mm", Locale.US).format(Date(txn.date))
+        JalaliDate.formatDateTime(txn.date)
     }
 
     ElevatedCard(modifier = Modifier.fillMaxWidth().clickable(onClick = onClick)) {
@@ -432,6 +521,14 @@ private fun TransactionCard(
                     if (isRecurring) {
                         Spacer(Modifier.width(6.dp))
                         AssistChip(onClick = {}, label = { Text("تکراری", style = MaterialTheme.typography.labelLarge) })
+                    }
+                    if (txn.transferGroupId != null) {
+                        Spacer(Modifier.width(6.dp))
+                        AssistChip(onClick = {}, label = { Text("انتقال داخلی", style = MaterialTheme.typography.labelLarge) })
+                    }
+                    if (txn.linkedCheckId != null) {
+                        Spacer(Modifier.width(6.dp))
+                        AssistChip(onClick = {}, label = { Text("مرتبط با چک", style = MaterialTheme.typography.labelLarge) })
                     }
                 }
                 Spacer(Modifier.height(4.dp))

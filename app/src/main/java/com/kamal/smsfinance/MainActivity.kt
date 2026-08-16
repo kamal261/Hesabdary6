@@ -8,6 +8,9 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.LifecycleOwner
 import androidx.activity.viewModels
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.BarChart
@@ -27,6 +30,7 @@ import com.kamal.smsfinance.ui.components.ScanRangeDialog
 import com.kamal.smsfinance.ui.theme.SmsFinanceTheme
 import com.kamal.smsfinance.util.CsvExporter
 import com.kamal.smsfinance.util.ThemeMode
+import com.kamal.smsfinance.widget.FinanceWidgetProvider
 
 private enum class Tab(val label: String) {
     LIST("تراکنش‌ها"), COUNTERPARTIES("طرف حساب‌ها"), CHECKS("چک‌ها"), STATS("آمار"), SETTINGS("تنظیمات")
@@ -59,7 +63,7 @@ class MainActivity : ComponentActivity() {
 
             SmsFinanceTheme(darkTheme = darkTheme) {
                 Surface(modifier = Modifier, color = MaterialTheme.colorScheme.background) {
-                    SmsPermissionGate(onGranted = { viewModel.onSmsPermissionGranted() }) {
+                    SmsPermissionGate(onGranted = { viewModel.onSmsPermissionGranted() }) { smsPermissionGranted, requestSmsPermission ->
                         val showOnboarding by viewModel.showScanRangeDialog.collectAsState()
                         if (showOnboarding) {
                             com.kamal.smsfinance.ui.components.OnboardingFlow(
@@ -71,7 +75,11 @@ class MainActivity : ComponentActivity() {
                                 onFinish = { days -> viewModel.completeOnboardingScan(days) }
                             )
                         } else {
-                            AppRoot(viewModel)
+                            AppRoot(
+                                viewModel = viewModel,
+                                smsPermissionGranted = smsPermissionGranted,
+                                onRequestSmsPermission = requestSmsPermission
+                            )
                         }
                     }
                 }
@@ -82,7 +90,11 @@ class MainActivity : ComponentActivity() {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun AppRoot(viewModel: TransactionViewModel) {
+private fun AppRoot(
+    viewModel: TransactionViewModel,
+    smsPermissionGranted: Boolean,
+    onRequestSmsPermission: () -> Unit
+) {
     val transactions by viewModel.allTransactions.collectAsState()
     val categories by viewModel.allCategories.collectAsState()
     val counterparties by viewModel.allCounterparties.collectAsState()
@@ -99,6 +111,11 @@ private fun AppRoot(viewModel: TransactionViewModel) {
     val smallAmountEnabled by viewModel.smallAmountEnabled.collectAsState()
     val smallAmountThreshold by viewModel.smallAmountThreshold.collectAsState()
     val smallAmountCategoryId by viewModel.smallAmountCategoryId.collectAsState()
+    val smartSuggestions by viewModel.smartSuggestions.collectAsState()
+    val lastScanTimestamp by viewModel.lastScanTimestamp.collectAsState()
+    val lastLocalBackupTimestamp by viewModel.lastLocalBackupTimestamp.collectAsState()
+    val shouldShowBackupReminder by viewModel.shouldShowBackupReminder.collectAsState()
+    val onboardingScanDone by viewModel.onboardingScanDone.collectAsState()
 
     var tab by remember { mutableStateOf(Tab.LIST) }
     var overlay by remember { mutableStateOf<Overlay?>(null) }
@@ -106,12 +123,27 @@ private fun AppRoot(viewModel: TransactionViewModel) {
 
     val snackbarHostState = remember { SnackbarHostState() }
     val context = LocalContext.current
+    val lifecycleOwner = context as? LifecycleOwner
+
+    DisposableEffect(lifecycleOwner, smsPermissionGranted, onboardingScanDone) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME && smsPermissionGranted && onboardingScanDone) {
+                viewModel.scanInboxOnResume()
+            }
+        }
+        lifecycleOwner?.lifecycle?.addObserver(observer)
+        onDispose { lifecycleOwner?.lifecycle?.removeObserver(observer) }
+    }
 
     val driveSignInLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) { result ->
         viewModel.handleDriveSignInResult(result.data)
         driveAccountEmail = viewModel.driveSignedInAccount()?.email
+    }
+
+    LaunchedEffect(transactions) {
+        FinanceWidgetProvider.requestUpdate(context)
     }
 
     LaunchedEffect(message) {
@@ -212,17 +244,22 @@ private fun AppRoot(viewModel: TransactionViewModel) {
                 val cpTransactions by viewModel.transactionsForCounterparty(current.id).collectAsState(initial = emptyList())
                 val balance by viewModel.balanceForCounterparty(current.id).collectAsState(initial = 0L)
                 val volume by viewModel.totalVolumeForCounterparty(current.id).collectAsState(initial = 0L)
+                val reminders by viewModel.remindersForCounterparty(current.id).collectAsState(initial = emptyList())
                 CounterpartyProfileScreen(
                     counterparty = counterparty,
                     transactions = cpTransactions,
                     balance = balance,
                     totalVolume = volume,
+                    reminders = reminders,
                     onBack = { overlay = null },
                     onDelete = {
                         viewModel.deleteCounterparty(counterparty)
                         overlay = null
                     },
-                    onSaveNotes = { notes -> viewModel.updateCounterpartyNotes(counterparty, notes) }
+                    onSaveNotes = { notes -> viewModel.updateCounterpartyNotes(counterparty, notes) },
+                    onAddReminder = { viewModel.addCounterpartyReminder(it) },
+                    onToggleReminder = { reminder, done -> viewModel.setCounterpartyReminderDone(reminder, done) },
+                    onDeleteReminder = { viewModel.deleteCounterpartyReminder(it) }
                 )
             }
             return
@@ -286,22 +323,56 @@ private fun AppRoot(viewModel: TransactionViewModel) {
         androidx.compose.foundation.layout.Box(modifier = Modifier.padding(padding)) {
             when (tab) {
                 Tab.LIST -> {
-                    val (owedToMe, iOwe) = viewModel.counterpartyBalanceSummary(transactions)
+                    val recurringIds = remember(transactions) {
+                        viewModel.recurringIds(transactions)
+                    }
+                    val categoryUsageCounts = remember(transactions) {
+                        viewModel.categoryUsageCounts(transactions)
+                    }
+                    val uncategorizedCount = remember(transactions) {
+                        transactions.count { it.categoryId == null }
+                    }
+                    val (owedToMe, iOwe) = remember(transactions, categories) {
+                        viewModel.counterpartyBalanceSummary(transactions)
+                    }
+                    val todayIncome = remember(transactions) {
+                        viewModel.todayIncome(transactions)
+                    }
+                    val todayExpense = remember(transactions) {
+                        viewModel.todayExpense(transactions)
+                    }
+                    val estimatedProfitThisMonth = remember(transactions, categories) {
+                        viewModel.estimatedProfit(
+                            viewModel.thisMonthTransactions(transactions),
+                            categories
+                        )
+                    }
                     TransactionListScreen(
                         transactions = transactions,
                         categories = categories,
-                        categoryUsageCounts = viewModel.categoryUsageCounts(transactions),
-                        recurringIds = viewModel.recurringIds(transactions),
+                        categoryUsageCounts = categoryUsageCounts,
+                        recurringIds = recurringIds,
                         isLoading = isLoading,
                         unidentifiedSmsCount = unidentifiedSms.size,
+                        uncategorizedCount = uncategorizedCount,
                         dashboard = DashboardData(
-                            todayIncome = viewModel.todayIncome(transactions),
-                            todayExpense = viewModel.todayExpense(transactions),
-                            estimatedProfitThisMonth = viewModel.estimatedProfit(viewModel.thisMonthTransactions(transactions), categories),
+                            todayIncome = todayIncome,
+                            todayExpense = todayExpense,
+                            estimatedProfitThisMonth = estimatedProfitThisMonth,
                             totalOwedToMe = owedToMe,
                             totalIOwe = iOwe,
                             checksDueSoonCount = checksDueSoon.size
                         ),
+                        smartSuggestions = smartSuggestions,
+                        lastScanTimestamp = lastScanTimestamp,
+                        backupReminderVisible = shouldShowBackupReminder,
+                        lastBackupTimestamp = lastLocalBackupTimestamp,
+                        smsPermissionGranted = smsPermissionGranted,
+                        onCreateBackup = { viewModel.createLocalBackup() },
+                        onSnoozeBackupReminder = { viewModel.snoozeBackupReminder() },
+                        onRequestSmsPermission = onRequestSmsPermission,
+                        onAcceptSuggestion = { viewModel.acceptSuggestion(it) },
+                        onRejectSuggestion = { viewModel.rejectSuggestion(it) },
                         onScanInbox = { viewModel.scanInbox() },
                         onDelete = { viewModel.deleteTransaction(it) },
                         onAddManual = { overlay = Overlay.AddManual },
@@ -379,7 +450,17 @@ private fun AppRoot(viewModel: TransactionViewModel) {
                     onSmallAmountCategoryChange = { viewModel.setSmallAmountCategoryId(it) },
                     onImportCategoriesCsv = { uri -> viewModel.importCategoriesCsv(uri) },
                     onImportCounterpartiesCsv = { uri -> viewModel.importCounterpartiesCsv(uri) },
-                    onRescan = { days -> viewModel.scanInbox(days?.let { System.currentTimeMillis() - it * 24L * 60 * 60 * 1000 }) },
+                    lastScanTimestamp = lastScanTimestamp,
+                    lastLocalBackupTimestamp = lastLocalBackupTimestamp,
+                    backupReminderVisible = shouldShowBackupReminder,
+                    onSnoozeBackupReminder = { viewModel.snoozeBackupReminder() },
+                    onRescan = { days ->
+                        viewModel.scanInbox(
+                            sinceMillis = days?.let { System.currentTimeMillis() - it * 24L * 60 * 60 * 1000 },
+                            incremental = false,
+                            commitCursor = false
+                        )
+                    },
                     onOpenHelp = { overlay = Overlay.Help }
                 )
             }

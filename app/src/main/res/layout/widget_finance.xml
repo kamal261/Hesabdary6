@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/widget_root"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:padding="12dp"
+    android:background="#F1F5F9"
+    android:clickable="true"
+    android:focusable="true">
+
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="SmsFinance · وضعیت امروز"
+        android:textStyle="bold"
+        android:textSize="16sp"
+        android:textColor="#172033" />
+
+    <TextView
+        android:id="@+id/widget_income"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:text="ورودی امروز: -- تومان"
+        android:textSize="14sp"
+        android:textColor="#176B4D" />
+
+    <TextView
+        android:id="@+id/widget_expense"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="خروجی امروز: -- تومان"
+        android:textSize="14sp"
+        android:textColor="#A33A3A" />
+
+    <TextView
+        android:id="@+id/widget_last_scan"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="6dp"
+        android:text="هنوز اسکن نشده است"
+        android:textSize="11sp"
+        android:textColor="#526070" />
+</LinearLayout>
