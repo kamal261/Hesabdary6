@@ -18,10 +18,12 @@ interface CategoryDao {
     @Query("SELECT * FROM categories WHERE parentId = :parentId ORDER BY name ASC")
     fun getSubcategories(parentId: Long): Flow<List<Category>>
 
-    /** Top-level-only re-parent guard: a category whose OWN parentId is non-null can't be
-     * chosen as a parent for another category (keeps nesting to exactly one level). */
+    /** Kept for callers that only need root categories; roots are no longer the only valid parents. */
     @Query("SELECT * FROM categories WHERE parentId IS NULL ORDER BY isDefault DESC, name ASC")
     suspend fun getTopLevelOnce(): List<Category>
+
+    @Query("SELECT * FROM categories WHERE parentId = :parentId ORDER BY isDefault DESC, name ASC")
+    suspend fun getChildrenOnce(parentId: Long): List<Category>
 
     /** Used before deleting a category: its children (if any) must be re-parented to
      * top-level first, since there's no DB-level ON DELETE behavior for parentId. */

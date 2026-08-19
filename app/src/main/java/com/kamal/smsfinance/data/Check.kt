@@ -1,6 +1,7 @@
 package com.kamal.smsfinance.data
 
 import androidx.room.Entity
+import androidx.room.Index
 import androidx.room.PrimaryKey
 
 /** RECEIVABLE: a check the user is holding, expecting to collect. PAYABLE: a check the user has issued. */
@@ -8,7 +9,10 @@ enum class CheckType { RECEIVABLE, PAYABLE }
 
 enum class CheckStatus { PENDING, CLEARED, BOUNCED }
 
-@Entity(tableName = "checks")
+@Entity(
+    tableName = "checks",
+    indices = [Index(value = ["status", "dueDate"])]
+)
 data class Check(
     @PrimaryKey(autoGenerate = true)
     val id: Long = 0,

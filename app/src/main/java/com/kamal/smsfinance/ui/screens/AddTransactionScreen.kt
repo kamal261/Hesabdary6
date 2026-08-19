@@ -25,6 +25,8 @@ import com.kamal.smsfinance.data.TransactionType
 import com.kamal.smsfinance.ui.components.CategoryPicker
 import com.kamal.smsfinance.ui.theme.GreenIncome
 import com.kamal.smsfinance.ui.theme.RedExpense
+import com.kamal.smsfinance.util.normalizeDigits
+import com.kamal.smsfinance.util.toPositiveLongOrNull
 import java.util.Calendar
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -48,14 +50,24 @@ fun AddTransactionScreen(
     var bank by remember { mutableStateOf("") }
     var description by remember { mutableStateOf("") }
     var selectedCategory by remember { mutableStateOf<Category?>(null) }
+    // Ported from Hesabdary6-main rev22: clears a now-invalid category selection when the user
+    // switches type after already picking one (e.g. picked a "وصول طلب" category, then
+    // switched to برداشت) -- otherwise the picker just hides the chip, but the stale selection
+    // would still be saved.
+    LaunchedEffect(type) {
+        if (selectedCategory != null && selectedCategory!!.kind !in relevantCategoryKinds(type)) {
+            selectedCategory = null
+        }
+    }
     var selectedCounterparty by remember { mutableStateOf<Counterparty?>(null) }
     var isIndirectSettlement by remember { mutableStateOf(false) }
     var showDetails by remember { mutableStateOf(false) }
 
-    val amountValid = amountText.toLongOrNull()?.let { it > 0 } == true
+    val amountValue = amountText.toPositiveLongOrNull()
+    val amountValid = amountValue?.let { it > 0 } == true
 
     fun save() {
-        val amount = amountText.toLong()
+        val amount = amountValue ?: return
         val date = Calendar.getInstance().timeInMillis
         if (isIndirectSettlement) {
             onSaveIndirectSettlement(amount, type, selectedCounterparty?.id, description, date, selectedCategory?.id)
@@ -85,7 +97,7 @@ fun AddTransactionScreen(
 
             OutlinedTextField(
                 value = amountText,
-                onValueChange = { input -> if (input.all { it.isDigit() }) amountText = input },
+                onValueChange = { input -> if (input.normalizeDigits().all { it.isDigit() || it == ',' || it == '٬' || it == ' ' }) amountText = input },
                 label = { Text("مبلغ (تومان)") },
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                 isError = amountText.isNotEmpty() && !amountValid,
@@ -145,7 +157,7 @@ fun AddTransactionScreen(
                         Text("دسته‌بندی", style = MaterialTheme.typography.titleSmall)
                         Spacer(Modifier.height(4.dp))
                         CategoryPicker(
-                            categories = categories,
+                            categories = categories.filter { it.kind in relevantCategoryKinds(type) },
                             usageCounts = categoryUsageCounts,
                             selectedId = selectedCategory?.id,
                             onSelect = { id -> selectedCategory = categories.firstOrNull { it.id == id } }

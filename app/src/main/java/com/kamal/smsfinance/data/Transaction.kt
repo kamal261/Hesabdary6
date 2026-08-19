@@ -29,7 +29,13 @@ enum class TransactionSource { SMS_AUTO, MANUAL, CHECK_SETTLEMENT }
             onDelete = ForeignKey.SET_NULL
         )
     ],
-    indices = [Index("categoryId"), Index("counterpartyId")]
+    indices = [
+        Index("categoryId"),
+        Index("counterpartyId"),
+        Index("transferGroupId"),
+        Index("linkedCheckId"),
+        Index("date")
+    ]
 )
 data class Transaction(
     @PrimaryKey(autoGenerate = true)
@@ -67,6 +73,12 @@ data class Transaction(
     // True when the user recorded this via the "third-party payment on my
     // behalf" reminder flow (money never touched their own bank SMS trail).
     val isIndirectSettlement: Boolean = false,
+
+    /** Shared id for the two sides of a suspected or confirmed personal transfer. */
+    val transferGroupId: Long? = null,
+
+    /** User-approved link to the check that explains this bank transaction. */
+    val linkedCheckId: Long? = null,
 
     // Free-text note the user can attach to a specific transaction (e.g. "علی ۱۲ جفت کفش هم
     // آورده، از حسابش کم کنم") -- separate from Category, since a note is transaction-specific

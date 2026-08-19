@@ -24,7 +24,13 @@ class SettingsStore(private val context: Context) {
     private val SMALL_AMOUNT_THRESHOLD_KEY = longPreferencesKey("small_amount_threshold")
     private val SMALL_AMOUNT_CATEGORY_KEY = longPreferencesKey("small_amount_category_id")
     private val ONBOARDING_SCAN_DONE_KEY = booleanPreferencesKey("onboarding_scan_done")
+    private val INITIAL_SCAN_DONE_KEY = booleanPreferencesKey("initial_scan_done")
+    private val LAST_SCAN_TIMESTAMP_KEY = longPreferencesKey("last_scan_timestamp")
+    private val LAST_SCAN_SMS_ID_KEY = stringPreferencesKey("last_scan_sms_id")
     private val ONBOARDING_GUIDE_DONE_KEY = booleanPreferencesKey("onboarding_guide_done")
+    private val LAST_LOCAL_BACKUP_TIMESTAMP_KEY = longPreferencesKey("last_local_backup_timestamp")
+    private val LAST_DRIVE_BACKUP_TIMESTAMP_KEY = longPreferencesKey("last_drive_backup_timestamp")
+    private val BACKUP_REMINDER_SNOOZE_UNTIL_KEY = longPreferencesKey("backup_reminder_snooze_until")
 
     val themeMode: Flow<ThemeMode> = context.dataStore.data.map { prefs ->
         prefs[THEME_KEY]?.let { runCatching { ThemeMode.valueOf(it) }.getOrNull() } ?: ThemeMode.SYSTEM
@@ -40,13 +46,27 @@ class SettingsStore(private val context: Context) {
     val smallAmountThreshold: Flow<Long> = context.dataStore.data.map { it[SMALL_AMOUNT_THRESHOLD_KEY] ?: 100_000L }
     val smallAmountCategoryId: Flow<Long?> = context.dataStore.data.map { it[SMALL_AMOUNT_CATEGORY_KEY] }
 
-    /** True once the user has answered the first-run "چند وقت گذشته اسکن بشه؟" prompt --
-     * gates ScanRangeDialog so it's only ever shown once, not on every cold start. */
-    val onboardingScanDone: Flow<Boolean> = context.dataStore.data.map { it[ONBOARDING_SCAN_DONE_KEY] ?: false }
+    /** True once the first historical scan range has been accepted and processed. */
+    val initialScanDone: Flow<Boolean> = context.dataStore.data.map { prefs ->
+        prefs[INITIAL_SCAN_DONE_KEY] ?: prefs[ONBOARDING_SCAN_DONE_KEY] ?: false
+    }
+
+    /** Backward-compatible name used by older UI code. */
+    val onboardingScanDone: Flow<Boolean> = initialScanDone
+
+    /** Timestamp of the newest SMS cursor committed by a completed scan. */
+    val lastScanTimestamp: Flow<Long?> = context.dataStore.data.map { it[LAST_SCAN_TIMESTAMP_KEY] }
+
+    /** Provider row id of the newest SMS cursor, when available. */
+    val lastScanSmsId: Flow<String?> = context.dataStore.data.map { it[LAST_SCAN_SMS_ID_KEY] }
 
     /** True once the user has been through (or explicitly skipped) the first-run guide/tour +
      * category-builder step -- gates OnboardingScreen so it only ever shows once. */
     val onboardingGuideDone: Flow<Boolean> = context.dataStore.data.map { it[ONBOARDING_GUIDE_DONE_KEY] ?: false }
+
+    val lastLocalBackupTimestamp: Flow<Long?> = context.dataStore.data.map { it[LAST_LOCAL_BACKUP_TIMESTAMP_KEY] }
+    val lastDriveBackupTimestamp: Flow<Long?> = context.dataStore.data.map { it[LAST_DRIVE_BACKUP_TIMESTAMP_KEY] }
+    val backupReminderSnoozeUntil: Flow<Long> = context.dataStore.data.map { it[BACKUP_REMINDER_SNOOZE_UNTIL_KEY] ?: 0L }
 
     suspend fun setThemeMode(mode: ThemeMode) {
         context.dataStore.edit { it[THEME_KEY] = mode.name }
@@ -74,11 +94,49 @@ class SettingsStore(private val context: Context) {
         }
     }
 
-    suspend fun setOnboardingScanDone(done: Boolean) {
-        context.dataStore.edit { it[ONBOARDING_SCAN_DONE_KEY] = done }
+    suspend fun setInitialScanDone(done: Boolean) {
+        context.dataStore.edit {
+            it[INITIAL_SCAN_DONE_KEY] = done
+            // Keep the legacy key in sync for installs upgraded from the previous branch.
+            it[ONBOARDING_SCAN_DONE_KEY] = done
+        }
+    }
+
+    suspend fun setOnboardingScanDone(done: Boolean) = setInitialScanDone(done)
+
+    suspend fun setLastScanCursor(timestamp: Long, smsId: String?) {
+        context.dataStore.edit {
+            it[LAST_SCAN_TIMESTAMP_KEY] = timestamp
+            if (smsId.isNullOrBlank()) it.remove(LAST_SCAN_SMS_ID_KEY) else it[LAST_SCAN_SMS_ID_KEY] = smsId
+        }
+    }
+
+    suspend fun clearLastScanCursor() {
+        context.dataStore.edit {
+            it.remove(LAST_SCAN_TIMESTAMP_KEY)
+            it.remove(LAST_SCAN_SMS_ID_KEY)
+        }
     }
 
     suspend fun setOnboardingGuideDone(done: Boolean) {
         context.dataStore.edit { it[ONBOARDING_GUIDE_DONE_KEY] = done }
+    }
+
+    suspend fun markLocalBackupSucceeded(timestamp: Long = System.currentTimeMillis()) {
+        context.dataStore.edit {
+            it[LAST_LOCAL_BACKUP_TIMESTAMP_KEY] = timestamp
+            it.remove(BACKUP_REMINDER_SNOOZE_UNTIL_KEY)
+        }
+    }
+
+    suspend fun markDriveBackupSucceeded(timestamp: Long = System.currentTimeMillis()) {
+        context.dataStore.edit {
+            it[LAST_DRIVE_BACKUP_TIMESTAMP_KEY] = timestamp
+            it.remove(BACKUP_REMINDER_SNOOZE_UNTIL_KEY)
+        }
+    }
+
+    suspend fun snoozeBackupReminder(until: Long) {
+        context.dataStore.edit { it[BACKUP_REMINDER_SNOOZE_UNTIL_KEY] = until }
     }
 }

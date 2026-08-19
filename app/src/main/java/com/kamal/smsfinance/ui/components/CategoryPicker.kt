@@ -1,6 +1,3 @@
-// SmsFinance file version: 3 — the expanded "بیشتر" list now groups subcategories under their
-// parent (indented, "↳ نام") instead of listing every category flat -- otherwise a subcategory
-// and its parent looked like two unrelated entries with no indication they're related.
 package com.kamal.smsfinance.ui.components
 
 import androidx.compose.foundation.layout.*
@@ -22,13 +19,6 @@ private fun kindLabel(kind: CategoryKind): String = when (kind) {
     CategoryKind.DEBT_PAYMENT -> "پرداخت بدهی"
 }
 
-/**
- * Category picker built around the "reduce decisions" north star: the four
- * categories the user actually uses most (computed live from transaction
- * counts, never stored) are shown immediately as one-tap chips. Everything
- * else lives behind a "بیشتر" toggle with search + kind filter, so picking a
- * rare category is still possible without cluttering the common case.
- */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun CategoryPicker(
@@ -42,42 +32,59 @@ fun CategoryPicker(
     var query by remember { mutableStateOf("") }
     var kindFilter by remember { mutableStateOf<CategoryKind?>(null) }
 
+    val byId = remember(categories) { categories.associateBy { it.id } }
+    val byParent = remember(categories) { categories.groupBy { it.parentId } }
     val topFour = remember(categories, usageCounts) {
-        val used = categories.filter { (usageCounts[it.id] ?: 0) > 0 }
-            .sortedByDescending { usageCounts[it.id] ?: 0 }
-        if (used.size >= 4) {
-            used.take(4)
-        } else {
-            val defaults = categories.filter { it.isDefault && it !in used }
-            (used + defaults).distinct().take(4)
+        val used = categories.filter { (usageCounts[it.id] ?: 0) > 0 }.sortedByDescending { usageCounts[it.id] ?: 0 }
+        val defaults = categories.filter { it.isDefault && it !in used }
+        (used + defaults).distinct().take(4)
+    }
+
+    fun pathOf(category: Category): String {
+        val path = mutableListOf<String>()
+        val visited = mutableSetOf<Long>()
+        var current: Category? = category
+        while (current != null && visited.add(current.id)) {
+            path += current.name
+            current = current.parentId?.let { byId[it] }
         }
+        return path.asReversed().joinToString(" / ")
     }
 
     val filtered = remember(categories, query, kindFilter) {
         categories.filter { cat ->
             (kindFilter == null || cat.kind == kindFilter) &&
-                (query.isBlank() || cat.name.contains(query, ignoreCase = true))
+                (query.isBlank() || pathOf(cat).contains(query, ignoreCase = true))
         }
     }
-    // Grouped for display: top-level categories (or any category whose parent got filtered
-    // out by the kind/search filters) first, each immediately followed by its matching
-    // children -- so "↳ سوپرمارکت" always renders right under "خواروبار", not scattered.
-    val displayOrder = remember(filtered) {
-        val byParent = filtered.filter { it.parentId != null }.groupBy { it.parentId }
-        val roots = filtered.filter { it.parentId == null || filtered.none { p -> p.id == it.parentId } }
-        roots.flatMap { root -> listOf(root to false) + (byParent[root.id].orEmpty().map { it to true }) }
+
+    fun flatten(parentId: Long?, depth: Int = 0, output: MutableList<Pair<Category, Int>>) {
+        byParent[parentId].orEmpty().sortedWith(compareByDescending<Category> { it.isDefault }.thenBy { it.name }).forEach { cat ->
+            if (cat in filtered) output += cat to depth
+            flatten(cat.id, depth + 1, output)
+        }
+    }
+
+    val displayOrder = remember(filtered, categories) {
+        val output = mutableListOf<Pair<Category, Int>>()
+        if (query.isNotBlank() || kindFilter != null) {
+            filtered.sortedBy { pathOf(it) }.forEach { output += it to 0 }
+        } else {
+            flatten(null, output = output)
+        }
+        output
     }
 
     Column(modifier = modifier) {
         FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             FilterChip(selected = selectedId == null, onClick = { onSelect(null) }, label = { Text("بدون دسته") })
             topFour.forEach { cat ->
-                FilterChip(selected = selectedId == cat.id, onClick = { onSelect(cat.id) }, label = { Text(cat.name) })
+                FilterChip(selected = selectedId == cat.id, onClick = { onSelect(cat.id) }, label = { Text(pathOf(cat).substringAfterLast(" / ")) })
             }
         }
 
         TextButton(onClick = { expanded = !expanded }) {
-            Text(if (expanded) "بستن لیست کامل" else "بیشتر (${categories.size} دسته)")
+            Text(if (expanded) "بستن فهرست دسته‌ها" else "انتخاب از همه دسته‌ها (${categories.size})")
             Icon(
                 imageVector = if (expanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
                 contentDescription = null,
@@ -89,35 +96,30 @@ fun CategoryPicker(
             OutlinedTextField(
                 value = query,
                 onValueChange = { query = it },
-                placeholder = { Text("جستجوی دسته...") },
+                placeholder = { Text("مثلاً سیگار یا خرید خانه") },
                 leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp)
             )
-
             FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 FilterChip(selected = kindFilter == null, onClick = { kindFilter = null }, label = { Text("همه") })
                 CategoryKind.values().forEach { k ->
                     FilterChip(selected = kindFilter == k, onClick = { kindFilter = k }, label = { Text(kindLabel(k)) })
                 }
             }
-
             Spacer(Modifier.height(8.dp))
-
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                // FlowRow per row keeps chips wrapping correctly while still grouping
-                // parent/child visually via a leading indent on children.
-                displayOrder.chunked(3).forEach { rowItems ->
-                    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        rowItems.forEach { (cat, isChild) ->
-                            if (isChild) Spacer(Modifier.width(12.dp))
-                            FilterChip(
-                                selected = selectedId == cat.id,
-                                onClick = { onSelect(cat.id) },
-                                label = { Text((if (isChild) "↳ " else "") + cat.name) }
+                displayOrder.forEach { (cat, depth) ->
+                    FilterChip(
+                        selected = selectedId == cat.id,
+                        onClick = { onSelect(cat.id) },
+                        label = {
+                            Text(
+                                if (query.isNotBlank() || kindFilter != null) pathOf(cat)
+                                else "${"  ".repeat(depth)}${if (depth > 0) "↳ " else ""}${cat.name}"
                             )
                         }
-                    }
+                    )
                 }
             }
         }

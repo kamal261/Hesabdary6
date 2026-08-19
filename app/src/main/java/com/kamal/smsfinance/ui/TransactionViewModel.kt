@@ -8,10 +8,14 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.google.android.gms.auth.api.signin.GoogleSignInAccount
 import com.kamal.smsfinance.SmsFinanceApp
+import com.kamal.smsfinance.analysis.PatternAnalyzer
+import com.kamal.smsfinance.analysis.SuggestionEngine
 import com.kamal.smsfinance.data.*
 import com.kamal.smsfinance.util.*
+import com.kamal.smsfinance.widget.FinanceWidgetProvider
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
@@ -26,6 +30,8 @@ class TransactionViewModel(application: Application) : AndroidViewModel(applicat
 
     private val repository: TransactionRepository = (application as SmsFinanceApp).repository
     private val settings = SettingsStore(application)
+    private val suggestionEngine = SuggestionEngine()
+    private val rejectedSuggestionIds = MutableStateFlow<Set<String>>(emptySet())
 
     // --- Transactions ---
     val allTransactions: StateFlow<List<Transaction>> = repository.allTransactions
@@ -45,6 +51,14 @@ class TransactionViewModel(application: Application) : AndroidViewModel(applicat
     // --- Checks ---
     val allChecks: StateFlow<List<Check>> = repository.allChecks
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val smartSuggestions: StateFlow<List<SmartSuggestion>> = combine(
+        allTransactions,
+        allChecks,
+        rejectedSuggestionIds
+    ) { transactions, checks, rejected ->
+        suggestionEngine.analyze(transactions, checks).filterNot { it.id in rejected }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     val checksDueSoon: StateFlow<List<Check>> = repository.checksDueSoon()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
@@ -79,6 +93,33 @@ class TransactionViewModel(application: Application) : AndroidViewModel(applicat
     val smallAmountCategoryId: StateFlow<Long?> = settings.smallAmountCategoryId
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
 
+    val lastScanTimestamp: StateFlow<Long?> = settings.lastScanTimestamp
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
+    val lastScanSmsId: StateFlow<String?> = settings.lastScanSmsId
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
+
+    val lastLocalBackupTimestamp: StateFlow<Long?> = settings.lastLocalBackupTimestamp
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
+    val lastDriveBackupTimestamp: StateFlow<Long?> = settings.lastDriveBackupTimestamp
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
+    val backupReminderSnoozeUntil: StateFlow<Long> = settings.backupReminderSnoozeUntil
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0L)
+    val shouldShowBackupReminder: StateFlow<Boolean> = combine(
+        lastLocalBackupTimestamp,
+        backupReminderSnoozeUntil
+    ) { lastBackup, snoozeUntil ->
+        BackupReminderPolicy.isDue(
+            lastBackupTimestamp = lastBackup,
+            snoozeUntil = snoozeUntil,
+            now = System.currentTimeMillis()
+        )
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), true)
+
+    private var lastResumeScanAt: Long = 0L
+    private companion object {
+        const val RESUME_SCAN_COOLDOWN_MILLIS = 60_000L
+    }
+
     fun setSmallAmountEnabled(enabled: Boolean) { viewModelScope.launch { settings.setSmallAmountEnabled(enabled) } }
     fun setSmallAmountThreshold(threshold: Long) { viewModelScope.launch { settings.setSmallAmountThreshold(threshold) } }
     fun setSmallAmountCategoryId(categoryId: Long?) { viewModelScope.launch { settings.setSmallAmountCategoryId(categoryId) } }
@@ -101,19 +142,110 @@ class TransactionViewModel(application: Application) : AndroidViewModel(applicat
 
     fun clearMessage() { _message.value = null }
 
+    fun rejectSuggestion(suggestion: SmartSuggestion) {
+        rejectedSuggestionIds.value = rejectedSuggestionIds.value + suggestion.id
+    }
+
+    fun acceptSuggestion(suggestion: SmartSuggestion) {
+        viewModelScope.launch {
+            when (suggestion.type) {
+                SmartSuggestionType.PERSONAL_TRANSFER -> {
+                    if (suggestion.transactionIds.size >= 2) {
+                        when (val result = repository.assignTransferGroup(
+                            suggestion.transactionIds,
+                            groupId = System.currentTimeMillis()
+                        )) {
+                            is TransferGroupResult.Success -> {
+                                _message.value = UiMessage("انتقال داخلی تأیید شد و در درآمد/هزینه دوباره شمرده نمی‌شود")
+                            }
+                            is TransferGroupResult.Rejected -> {
+                                _message.value = UiMessage(
+                                    "انتقال ثبت نشد؛ ترکیب تراکنش‌ها یا گروه انتقال معتبر نیست",
+                                    isError = true
+                                )
+                            }
+                        }
+                    }
+                }
+                SmartSuggestionType.CHECK_MATCH -> {
+                    val transactionId = suggestion.transactionIds.firstOrNull()
+                    val checkId = suggestion.checkId
+                    if (transactionId != null && checkId != null) {
+                        when (val result = repository.linkTransactionToCheck(transactionId, checkId)) {
+                            is CheckLinkResult.Success -> {
+                                _message.value = UiMessage("پیامک به چک وصل شد و مبلغ دوباره ثبت نشد")
+                            }
+                            is CheckLinkResult.Rejected -> {
+                                _message.value = UiMessage(
+                                    "اتصال انجام نشد؛ مبلغ، نوع یا وضعیت چک با پیامک سازگار نیست",
+                                    isError = true
+                                )
+                            }
+                        }
+                    }
+                }
+                SmartSuggestionType.POSSIBLE_DUPLICATE_CHECK -> {
+                    _message.value = UiMessage("این مورد فقط برای بررسی شما علامت‌گذاری شد؛ هیچ مبلغی حذف یا تغییر نکرد")
+                }
+                SmartSuggestionType.RECURRING_PATTERN -> {
+                    val firstTransaction = allTransactions.value.firstOrNull { it.id == suggestion.transactionIds.firstOrNull() }
+                    val categoryId = suggestion.suggestedCategoryId ?: firstTransaction?.categoryId
+                    if (firstTransaction != null && categoryId != null) {
+                        repository.addRule(
+                            pattern = firstTransaction.description.ifBlank { firstTransaction.bankName },
+                            categoryId = categoryId,
+                            counterpartyId = firstTransaction.counterpartyId
+                        )
+                        _message.value = UiMessage("قانون این الگو ذخیره شد و از این پس پیشنهاد دسته‌بندی می‌دهد")
+                    } else {
+                        _message.value = UiMessage("برای ساخت قانون، اول یکی از تراکنش‌های این الگو را دسته‌بندی کنید", isError = true)
+                    }
+                }
+            }
+            rejectedSuggestionIds.value = rejectedSuggestionIds.value + suggestion.id
+        }
+    }
+
     // --- SMS scanning ---
 
-    fun scanInbox(sinceMillis: Long? = null) {
+    fun scanInbox(
+        sinceMillis: Long? = null,
+        incremental: Boolean = true,
+        markInitialDone: Boolean = false,
+        commitCursor: Boolean = true
+    ) {
         viewModelScope.launch {
             _isLoading.value = true
             try {
-                val added = repository.scanInboxAndImport(sinceMillis)
-                _message.value = UiMessage("$added تراکنش جدید از پیامک‌ها شناسایی و ذخیره شد")
+                val result = repository.scanInboxAndImport(
+                    sinceMillis = sinceMillis,
+                    incremental = incremental,
+                    commitCursor = commitCursor
+                )
+                if (markInitialDone) settings.setInitialScanDone(true)
+                FinanceWidgetProvider.requestUpdate(getApplication())
+                _message.value = UiMessage(
+                    "${result.added} تراکنش جدید از ${result.scanned} پیامک بررسی‌شده ذخیره شد"
+                )
             } catch (e: Exception) {
                 _message.value = UiMessage("خطا در اسکن پیامک‌ها: ${e.message}", isError = true)
             } finally {
                 _isLoading.value = false
             }
+        }
+    }
+
+    /** Incremental scan used when the app becomes visible. Existing cursor and dedup protect against duplicates. */
+    fun scanInboxOnResume() {
+        val now = System.currentTimeMillis()
+        if (_isLoading.value || now - lastResumeScanAt < RESUME_SCAN_COOLDOWN_MILLIS) return
+        lastResumeScanAt = now
+        scanInbox()
+    }
+
+    fun snoozeBackupReminder(days: Int = 7) {
+        viewModelScope.launch {
+            settings.snoozeBackupReminder(System.currentTimeMillis() + days * 24L * 60L * 60L * 1000L)
         }
     }
 
@@ -141,8 +273,9 @@ class TransactionViewModel(application: Application) : AndroidViewModel(applicat
     fun completeOnboardingScan(days: Int?) {
         _showScanRangeDialog.value = false
         val sinceMillis = days?.let { System.currentTimeMillis() - it * 24L * 60 * 60 * 1000 }
-        viewModelScope.launch { settings.setOnboardingScanDone(true) }
-        scanInbox(sinceMillis)
+        // This is the only historical scan launched from first-run. Future taps on the
+        // dashboard use scanInbox() with the stored cursor; older ranges remain a Settings action.
+        scanInbox(sinceMillis, incremental = false, markInitialDone = true)
     }
 
     val onboardingGuideDone: StateFlow<Boolean> = settings.onboardingGuideDone
@@ -297,6 +430,19 @@ class TransactionViewModel(application: Application) : AndroidViewModel(applicat
     fun transactionsForCounterparty(id: Long) = repository.transactionsForCounterparty(id)
     fun balanceForCounterparty(id: Long) = repository.balanceForCounterparty(id)
     fun totalVolumeForCounterparty(id: Long) = repository.totalVolumeForCounterparty(id)
+    fun remindersForCounterparty(id: Long) = repository.remindersForCounterparty(id)
+
+    fun addCounterpartyReminder(reminder: CounterpartyReminder) {
+        viewModelScope.launch { repository.addCounterpartyReminder(reminder) }
+    }
+
+    fun setCounterpartyReminderDone(reminder: CounterpartyReminder, done: Boolean) {
+        viewModelScope.launch { repository.setCounterpartyReminderDone(reminder, done) }
+    }
+
+    fun deleteCounterpartyReminder(reminder: CounterpartyReminder) {
+        viewModelScope.launch { repository.deleteCounterpartyReminder(reminder) }
+    }
 
     fun importCounterpartiesCsv(uri: Uri) {
         viewModelScope.launch {
@@ -419,6 +565,7 @@ class TransactionViewModel(application: Application) : AndroidViewModel(applicat
             try {
                 val db = (getApplication<Application>() as SmsFinanceApp).database
                 val file = BackupManager.createBackup(getApplication(), db)
+                settings.markLocalBackupSucceeded()
                 _message.value = UiMessage("پشتیبان در ${file.name} ذخیره شد")
             } catch (e: Exception) {
                 _message.value = UiMessage("خطا در پشتیبان‌گیری: ${e.message}", isError = true)
@@ -438,8 +585,11 @@ class TransactionViewModel(application: Application) : AndroidViewModel(applicat
         _pendingRestoreUri.value = null
         viewModelScope.launch {
             val db = (getApplication<Application>() as SmsFinanceApp).database
-            BackupManager.wipeForRestore(db)
-            performRestore(uri, db)
+            // Ported from Hesabdary6-main rev22: wipe and restore must be in ONE
+            // db.withTransaction so a failed restore rolls back the wipe too. Previously wipe
+            // ran OUTSIDE the restore transaction -- a bad backup file would leave the
+            // database empty with no way back.
+            performRestoreAtomic(uri, db)
         }
     }
 
@@ -452,7 +602,19 @@ class TransactionViewModel(application: Application) : AndroidViewModel(applicat
         if (BackupManager.hasExistingData(db)) {
             _pendingRestoreUri.value = uri
         } else {
-            performRestore(uri, db)
+            performRestoreAtomic(uri, db)
+        }
+    }
+
+    private suspend fun performRestoreAtomic(uri: Uri, db: AppDatabase) {
+        _isLoading.value = true
+        try {
+            val count = BackupManager.restoreAndReplaceAtomic(getApplication(), uri, db)
+            _message.value = UiMessage("$count تراکنش بازیابی شد")
+        } catch (e: Exception) {
+            _message.value = UiMessage("خطا در بازیابی: ${e.message}", isError = true)
+        } finally {
+            _isLoading.value = false
         }
     }
 
@@ -511,7 +673,10 @@ class TransactionViewModel(application: Application) : AndroidViewModel(applicat
                 val db = (app as SmsFinanceApp).database
                 val file = BackupManager.createBackup(app, db)
                 when (val result = GoogleDriveUploader.upload(token, file)) {
-                    is GoogleDriveUploader.DriveResult.Success -> _message.value = UiMessage(result.message)
+                    is GoogleDriveUploader.DriveResult.Success -> {
+                        settings.markDriveBackupSucceeded()
+                        _message.value = UiMessage(result.message)
+                    }
                     is GoogleDriveUploader.DriveResult.Failure -> _message.value = UiMessage(result.message, isError = true)
                 }
             } finally {
@@ -550,31 +715,34 @@ class TransactionViewModel(application: Application) : AndroidViewModel(applicat
 
     // --- Statistics helpers (computed in-memory from the already-loaded list) ---
 
+    /** A confirmed personal transfer is movement, not a real income or expense. */
+    private fun reportable(list: List<Transaction>) = list.filter { it.transferGroupId == null }
+
     fun totalIncome(list: List<Transaction> = allTransactions.value) =
-        list.filter { it.type == TransactionType.INCOME }.sumOf { it.amountToman }
+        reportable(list).filter { it.type == TransactionType.INCOME }.sumOf { it.amountToman }
 
     fun totalExpense(list: List<Transaction> = allTransactions.value) =
-        list.filter { it.type == TransactionType.EXPENSE }.sumOf { it.amountToman }
+        reportable(list).filter { it.type == TransactionType.EXPENSE }.sumOf { it.amountToman }
 
     private fun categoryKindOf(transaction: Transaction, categories: List<Category>): CategoryKind? =
         categories.firstOrNull { it.id == transaction.categoryId }?.kind
 
     fun realIncome(list: List<Transaction> = allTransactions.value, categories: List<Category> = allCategories.value) =
-        list.filter { it.type == TransactionType.INCOME && categoryKindOf(it, categories) != CategoryKind.DEBT_COLLECTION }
+        reportable(list).filter { it.type == TransactionType.INCOME && categoryKindOf(it, categories) != CategoryKind.DEBT_COLLECTION }
             .sumOf { it.amountToman }
 
     fun realExpense(list: List<Transaction> = allTransactions.value, categories: List<Category> = allCategories.value) =
-        list.filter { it.type == TransactionType.EXPENSE && categoryKindOf(it, categories) != CategoryKind.DEBT_PAYMENT }
+        reportable(list).filter { it.type == TransactionType.EXPENSE && categoryKindOf(it, categories) != CategoryKind.DEBT_PAYMENT }
             .sumOf { it.amountToman }
 
     fun estimatedProfit(list: List<Transaction> = allTransactions.value, categories: List<Category> = allCategories.value) =
         realIncome(list, categories) - realExpense(list, categories)
 
     fun debtCollected(list: List<Transaction> = allTransactions.value, categories: List<Category> = allCategories.value) =
-        list.filter { categoryKindOf(it, categories) == CategoryKind.DEBT_COLLECTION }.sumOf { it.amountToman }
+        reportable(list).filter { categoryKindOf(it, categories) == CategoryKind.DEBT_COLLECTION }.sumOf { it.amountToman }
 
     fun debtPaid(list: List<Transaction> = allTransactions.value, categories: List<Category> = allCategories.value) =
-        list.filter { categoryKindOf(it, categories) == CategoryKind.DEBT_PAYMENT }.sumOf { it.amountToman }
+        reportable(list).filter { categoryKindOf(it, categories) == CategoryKind.DEBT_PAYMENT }.sumOf { it.amountToman }
 
     fun thisMonthTransactions(list: List<Transaction> = allTransactions.value): List<Transaction> {
         val cal = Calendar.getInstance()
@@ -595,16 +763,25 @@ class TransactionViewModel(application: Application) : AndroidViewModel(applicat
     fun todayExpense(list: List<Transaction> = allTransactions.value) = totalExpense(todayTransactions(list))
 
     fun byBank(list: List<Transaction> = allTransactions.value): Map<String, Long> =
-        list.groupBy { it.bankName }.mapValues { (_, txns) -> txns.sumOf { it.amountToman } }
+        reportable(list).groupBy { it.bankName }.mapValues { (_, txns) -> txns.sumOf { it.amountToman } }
 
     fun byCategory(list: List<Transaction> = allTransactions.value, categories: List<Category> = allCategories.value): Map<String, Long> {
         val nameById = categories.associateBy { it.id }
-        return list.groupBy { nameById[it.categoryId]?.name ?: "بدون دسته" }
+        return reportable(list).groupBy { nameById[it.categoryId]?.name ?: "بدون دسته" }
             .mapValues { (_, txns) -> txns.sumOf { it.amountToman } }
     }
 
+    /**
+     * The UI/export path now consumes the unified PatternAnalyzer. The legacy RecurringDetector
+     * remains in the project and keeps its regression tests until the new strategy has proved
+     * equivalent coverage for all old cadence/tolerance cases.
+     */
     fun recurringIds(list: List<Transaction> = allTransactions.value): Set<Long> =
-        RecurringDetector.computeRecurringIds(list)
+        PatternAnalyzer()
+            .analyze(list)
+            .filter { it.type == SmartSuggestionType.RECURRING_PATTERN }
+            .flatMap { it.transactionIds }
+            .toSet()
 
     fun recurringOnly(list: List<Transaction> = allTransactions.value): List<Transaction> {
         val ids = recurringIds(list)

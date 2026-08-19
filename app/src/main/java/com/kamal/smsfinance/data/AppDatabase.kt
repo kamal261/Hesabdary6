@@ -58,8 +58,16 @@ class Converters {
 }
 
 @Database(
-    entities = [Transaction::class, Category::class, Counterparty::class, Check::class, SmartRule::class, UnidentifiedSms::class],
-    version = 7,
+    entities = [
+        Transaction::class,
+        Category::class,
+        Counterparty::class,
+        CounterpartyReminder::class,
+        Check::class,
+        SmartRule::class,
+        UnidentifiedSms::class
+    ],
+    version = 9,
     exportSchema = true
 )
 @TypeConverters(Converters::class)
@@ -68,6 +76,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun transactionDao(): TransactionDao
     abstract fun categoryDao(): CategoryDao
     abstract fun counterpartyDao(): CounterpartyDao
+    abstract fun counterpartyReminderDao(): CounterpartyReminderDao
     abstract fun checkDao(): CheckDao
     abstract fun smartRuleDao(): SmartRuleDao
     abstract fun unidentifiedSmsDao(): UnidentifiedSmsDao
@@ -91,6 +100,40 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        private val MIGRATION_7_8 = object : Migration(7, 8) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE transactions ADD COLUMN transferGroupId INTEGER DEFAULT NULL")
+                db.execSQL("ALTER TABLE transactions ADD COLUMN linkedCheckId INTEGER DEFAULT NULL")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_transactions_transferGroupId ON transactions(transferGroupId)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_transactions_linkedCheckId ON transactions(linkedCheckId)")
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS counterparty_reminders (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        counterpartyId INTEGER NOT NULL,
+                        title TEXT NOT NULL,
+                        details TEXT,
+                        dueAt INTEGER,
+                        isDone INTEGER NOT NULL,
+                        createdAt INTEGER NOT NULL,
+                        completedAt INTEGER,
+                        FOREIGN KEY(counterpartyId) REFERENCES counterparties(id) ON UPDATE NO ACTION ON DELETE CASCADE
+                    )
+                    """.trimIndent()
+                )
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_counterparty_reminders_counterpartyId ON counterparty_reminders(counterpartyId)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_counterparty_reminders_dueAt ON counterparty_reminders(dueAt)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_counterparty_reminders_isDone_dueAt ON counterparty_reminders(isDone, dueAt)")
+            }
+        }
+
+        internal val MIGRATION_8_9 = object : Migration(8, 9) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_transactions_date ON transactions(date)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_checks_status_dueDate ON checks(status, dueDate)")
+            }
+        }
+
         fun getInstance(context: Context): AppDatabase =
             INSTANCE ?: synchronized(this) {
                 INSTANCE ?: Room.databaseBuilder(
@@ -98,10 +141,10 @@ abstract class AppDatabase : RoomDatabase() {
                     AppDatabase::class.java,
                     "sms_finance.db"
                 )
-                    .addMigrations(MIGRATION_5_6, MIGRATION_6_7)
-                    // Safety net only for schema versions not explicitly covered above --
-                    // every version bump should get a real Migration, not rely on this.
-                    .fallbackToDestructiveMigration()
+                    .addMigrations(MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9)
+                    // Never silently wipe a user's financial history. Every supported schema
+                    // change must have an explicit migration and an upgrade failure must remain
+                    // visible instead of destroying data.
                     .addCallback(SeedCallback)
                     .build()
                     .also { INSTANCE = it }

@@ -12,6 +12,7 @@ import android.content.Context
 import androidx.room.withTransaction
 import com.kamal.smsfinance.sms.DedupEngine
 import com.kamal.smsfinance.sms.ParsedSms
+import com.kamal.smsfinance.sms.RawSms
 import com.kamal.smsfinance.sms.SmsParser
 import com.kamal.smsfinance.sms.SmsParseResult
 import com.kamal.smsfinance.sms.SmsReaderUtil
@@ -20,11 +21,19 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import java.util.concurrent.TimeUnit
 
+data class ScanResult(
+    val added: Int,
+    val scanned: Int,
+    val latestTimestamp: Long?,
+    val latestSmsId: String?
+)
+
 class TransactionRepository(
     private val db: AppDatabase,
     private val transactionDao: TransactionDao,
     private val categoryDao: CategoryDao,
     private val counterpartyDao: CounterpartyDao,
+    private val counterpartyReminderDao: CounterpartyReminderDao,
     private val checkDao: CheckDao,
     private val smartRuleDao: SmartRuleDao,
     private val unidentifiedSmsDao: UnidentifiedSmsDao,
@@ -62,6 +71,60 @@ class TransactionRepository(
         transactionDao.updateNotes(transactionId, notes?.takeIf { it.isNotBlank() })
 
     /**
+     * Applies a user-approved personal-transfer group only when its financial invariant is valid.
+     * The read/validate/update sequence is one SQLite transaction so callers cannot race a
+     * transaction into two groups or create a group with an invalid composition.
+     */
+    suspend fun assignTransferGroup(transactionIds: List<Long>, groupId: Long): TransferGroupResult =
+        db.withTransaction {
+            val ids = transactionIds.distinct()
+            if (ids.size < 2) return@withTransaction TransferGroupResult.Rejected(
+                TransferGroupRejection.TOO_FEW_TRANSACTIONS
+            )
+            if (groupId <= 0L) return@withTransaction TransferGroupResult.Rejected(
+                TransferGroupRejection.INVALID_GROUP_ID
+            )
+
+            val selected = ids.mapNotNull { transactionDao.getById(it) }
+            if (selected.size != ids.size) return@withTransaction TransferGroupResult.Rejected(
+                TransferGroupRejection.TRANSACTION_NOT_FOUND
+            )
+
+            val existingMembers = transactionDao.byTransferGroupOnce(groupId)
+            FinancialLinkRules.validateTransfer(selected, existingMembers, groupId)?.let { rejection ->
+                return@withTransaction TransferGroupResult.Rejected(rejection)
+            }
+            val finalMembers = (existingMembers + selected).distinctBy { it.id }
+            transactionDao.assignTransferGroup(finalMembers.map { it.id }, groupId)
+            TransferGroupResult.Success(groupId, finalMembers.map { it.id })
+        }
+
+    /**
+     * Links an existing bank transaction to a pending check without creating a second row.
+     * All financial compatibility checks live here rather than only in CheckMatcher/UI.
+     */
+    suspend fun linkTransactionToCheck(transactionId: Long, checkId: Long): CheckLinkResult =
+        db.withTransaction {
+            val transaction = transactionDao.getById(transactionId)
+                ?: return@withTransaction CheckLinkResult.Rejected(CheckLinkRejection.TRANSACTION_NOT_FOUND)
+            val check = checkDao.getById(checkId)
+                ?: return@withTransaction CheckLinkResult.Rejected(CheckLinkRejection.CHECK_NOT_FOUND)
+            FinancialLinkRules.validateCheckLink(transaction, check)?.let { rejection ->
+                return@withTransaction CheckLinkResult.Rejected(rejection)
+            }
+
+            transactionDao.linkCheck(transactionId, checkId)
+            checkDao.update(
+                check.copy(
+                    status = CheckStatus.CLEARED,
+                    paidDate = transaction.date,
+                    settledTransactionId = transaction.id
+                )
+            )
+            CheckLinkResult.Success(transactionId, checkId)
+        }
+
+    /**
      * Records a payment someone else made on the user's behalf (or vice
      * versa) that will never appear in the user's own bank SMS -- the
      * "third-party settlement" reminder flow. Always stored as a debt
@@ -91,21 +154,36 @@ class TransactionRepository(
     }
 
     /**
-     * Scans the full SMS inbox (READ_SMS) once, parses every recognizable bank
-     * message, and stores new ones silently (no notification). Returns how
-     * many new transactions were added. Safe to call repeatedly -- existing
-     * rows are skipped via existsExact().
+     * Scans the inbox and returns both import counts and the newest provider cursor.
+     * [incremental] uses the last committed timestamp/id; historical scans deliberately
+     * bypass that cursor so they can fill an older gap without moving the daily cursor.
      */
-    suspend fun scanInboxAndImport(sinceMillis: Long? = null): Int {
-        val messages = SmsReaderUtil.readInbox(context, sinceMillis)
+    suspend fun scanInboxAndImport(
+        sinceMillis: Long? = null,
+        afterSmsId: String? = null,
+        incremental: Boolean = true,
+        commitCursor: Boolean = false
+    ): ScanResult {
+        val effectiveSince = if (incremental) settings.lastScanTimestamp.first() else sinceMillis
+        val effectiveId = if (incremental) settings.lastScanSmsId.first() else afterSmsId
+        val messages = SmsReaderUtil.readInbox(context, effectiveSince, effectiveId)
         var added = 0
         for (msg in messages) {
             if (handleParseResult(SmsParser.parse(msg.sender, msg.body, msg.timestamp))) added++
         }
-        return added
+        val latest = messages.maxWithOrNull(compareBy<RawSms> { it.timestamp }.thenBy { it.id ?: "" })
+        if (commitCursor && latest != null) {
+            settings.setLastScanCursor(latest.timestamp, latest.id)
+        }
+        return ScanResult(
+            added = added,
+            scanned = messages.size,
+            latestTimestamp = latest?.timestamp,
+            latestSmsId = latest?.id
+        )
     }
 
-    /** Called from SmsReceiver when a new SMS arrives in real time. Silent -- no notification. */
+    /** Imports one SMS through the same parser and dedup pipeline used by inbox scanning. */
     suspend fun importSingleSms(sender: String, body: String, timestamp: Long) {
         handleParseResult(SmsParser.parse(sender, body, timestamp))
     }
@@ -245,6 +323,24 @@ class TransactionRepository(
     suspend fun updateCounterparty(counterparty: Counterparty) = counterpartyDao.update(counterparty)
     suspend fun deleteCounterparty(counterparty: Counterparty) = counterpartyDao.delete(counterparty)
 
+    // --- Counterparty reminders ---
+
+    fun remindersForCounterparty(counterpartyId: Long) = counterpartyReminderDao.forCounterparty(counterpartyId)
+    val dueCounterpartyReminders: Flow<List<CounterpartyReminder>> =
+        counterpartyReminderDao.due(System.currentTimeMillis())
+
+    suspend fun addCounterpartyReminder(reminder: CounterpartyReminder) = counterpartyReminderDao.insert(reminder)
+    suspend fun updateCounterpartyReminder(reminder: CounterpartyReminder) = counterpartyReminderDao.update(reminder)
+    suspend fun deleteCounterpartyReminder(reminder: CounterpartyReminder) = counterpartyReminderDao.delete(reminder)
+
+    suspend fun setCounterpartyReminderDone(reminder: CounterpartyReminder, done: Boolean) {
+        counterpartyReminderDao.setDone(
+            id = reminder.id,
+            done = done,
+            completedAt = if (done) System.currentTimeMillis() else null
+        )
+    }
+
     // --- Checks ---
 
     val allChecks: Flow<List<Check>> = checkDao.getAll()
@@ -285,7 +381,8 @@ class TransactionRepository(
                         ?: if (current.type == CheckType.RECEIVABLE) "وصول چک" else "پرداخت چک",
                     date = settledDate,
                     source = TransactionSource.CHECK_SETTLEMENT,
-                    counterpartyId = current.counterpartyId
+                    counterpartyId = current.counterpartyId,
+                    linkedCheckId = current.id
                 )
             )
             checkDao.update(current.copy(status = CheckStatus.CLEARED, paidDate = settledDate, settledTransactionId = txnId))

@@ -16,6 +16,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import com.kamal.smsfinance.data.Category
+import com.kamal.smsfinance.util.JalaliDate
+import com.kamal.smsfinance.util.normalizeDigits
+import com.kamal.smsfinance.util.toPositiveLongOrNull
 import com.kamal.smsfinance.util.ThemeMode
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -49,11 +52,16 @@ fun SettingsScreen(
     onImportCategoriesCsv: (android.net.Uri) -> Unit,
     onImportCounterpartiesCsv: (android.net.Uri) -> Unit,
     onRescan: (days: Int?) -> Unit,
+    lastScanTimestamp: Long? = null,
+    lastLocalBackupTimestamp: Long? = null,
+    backupReminderVisible: Boolean = false,
+    onSnoozeBackupReminder: () -> Unit = {},
     onOpenHelp: () -> Unit
 ) {
     var webhookField by remember(webhookUrl) { mutableStateOf(webhookUrl) }
     var showDeleteConfirm by remember { mutableStateOf(false) }
     var showRescanDialog by remember { mutableStateOf(false) }
+    var advancedMode by remember { mutableStateOf(false) }
 
     val restoreLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.GetContent()
@@ -94,8 +102,14 @@ fun SettingsScreen(
                     Text(if (unidentifiedSmsCount > 0) "پیامک‌های شناسایی‌نشده ($unidentifiedSmsCount)" else "پیامک‌های شناسایی‌نشده")
                 }
                 OutlinedButton(onClick = { showRescanDialog = true }, modifier = Modifier.fillMaxWidth()) {
-                    Text("اسکن مجدد پیامک‌ها (بازه دلخواه)")
+                    Text("اسکن پیامک‌های قدیمی‌تر")
                 }
+                Text(
+                    lastScanTimestamp?.let { "آخرین اسکن افزایشی: ${JalaliDate.formatDateTime(it)}" }
+                        ?: "هنوز اسکن افزایشی انجام نشده است",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
                 OutlinedButton(onClick = onOpenHelp, modifier = Modifier.fillMaxWidth()) {
                     Text("راهنمای استفاده")
                 }
@@ -117,9 +131,9 @@ fun SettingsScreen(
                     OutlinedTextField(
                         value = thresholdText,
                         onValueChange = { input ->
-                            if (input.all { it.isDigit() }) {
+                            if (input.normalizeDigits().all { it.isDigit() || it == ',' || it == '٬' || it == ' ' }) {
                                 thresholdText = input
-                                input.toLongOrNull()?.let(onSmallAmountThresholdChange)
+                                input.toPositiveLongOrNull()?.let(onSmallAmountThresholdChange)
                             }
                         },
                         label = { Text("سقف مبلغ (تومان)") },
@@ -165,6 +179,20 @@ fun SettingsScreen(
 
         SettingsSection(title = "پشتیبان‌گیری محلی") {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (backupReminderVisible) {
+                    Text(
+                        "از آخرین پشتیبان‌گیری مدت زیادی گذشته است؛ بهتر است یک نسخه تازه بسازید.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.error
+                    )
+                    TextButton(onClick = onSnoozeBackupReminder) { Text("یادآوری بعدی") }
+                }
+                Text(
+                    lastLocalBackupTimestamp?.let { "آخرین پشتیبان‌گیری: ${JalaliDate.formatDateTime(it)}" }
+                        ?: "هنوز پشتیبان محلی ساخته نشده است",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
                 Button(onClick = onCreateBackup, modifier = Modifier.fillMaxWidth()) {
                     Text("ساخت نسخه پشتیبان")
                 }
@@ -177,7 +205,8 @@ fun SettingsScreen(
             }
         }
 
-        SettingsSection(title = "پشتیبان‌گیری در Google Drive (اختیاری)") {
+        if (advancedMode) {
+            SettingsSection(title = "پشتیبان‌گیری در Google Drive (اختیاری)") {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 if (driveSignedInEmail != null) {
                     Text(
@@ -228,6 +257,8 @@ fun SettingsScreen(
             }
         }
 
+        }
+
         SettingsSection(title = "منطقه خطر") {
             OutlinedButton(
                 onClick = { showDeleteConfirm = true },
@@ -243,8 +274,13 @@ fun SettingsScreen(
         SettingsSection(title = "نسخه") {
             Column {
                 Text(
-                    "${com.kamal.smsfinance.BuildInfo.BRANCH_LABEL} · ${com.kamal.smsfinance.BuildInfo.BUILD_DATE}",
+                    "نسخه ${com.kamal.smsfinance.BuildInfo.VERSION_NAME} · ${com.kamal.smsfinance.BuildInfo.BRANCH_LABEL}",
                     style = MaterialTheme.typography.bodyMedium
+                )
+                Text(
+                    "تاریخ ساخت: ${com.kamal.smsfinance.BuildInfo.BUILD_DATE_SHAMSI} (${com.kamal.smsfinance.BuildInfo.BUILD_DATE})",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
                 Spacer(Modifier.height(4.dp))
                 Text(
@@ -254,9 +290,18 @@ fun SettingsScreen(
                 )
                 Spacer(Modifier.height(12.dp))
                 Text(
-                    "طراحی و توسعه: ${com.kamal.smsfinance.BuildInfo.DEVELOPER_NAME}",
+                    "توسعه‌دهنده: ${com.kamal.smsfinance.BuildInfo.DEVELOPER_NAME}",
                     style = MaterialTheme.typography.bodyMedium
                 )
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    "طراح: ${com.kamal.smsfinance.BuildInfo.DESIGNER_NAME}",
+                    style = MaterialTheme.typography.bodyMedium
+                )
+                Spacer(Modifier.height(8.dp))
+                TextButton(onClick = { advancedMode = !advancedMode }) {
+                    Text(if (advancedMode) "بستن تنظیمات پیشرفته" else "تنظیمات پیشرفته")
+                }
             }
         }
 

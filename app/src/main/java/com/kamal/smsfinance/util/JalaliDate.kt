@@ -60,22 +60,23 @@ object JalaliDate {
     fun formatDateTime(epochMillis: Long): String {
         val cal = Calendar.getInstance()
         cal.timeInMillis = epochMillis
-        return "${formatDate(epochMillis)} - ${pad2(cal.get(Calendar.HOUR_OF_DAY))}:${pad2(cal.get(Calendar.MINUTE))}"
+        return toPersianDigits("${formatDate(epochMillis)} - ${pad2(cal.get(Calendar.HOUR_OF_DAY))}:${pad2(cal.get(Calendar.MINUTE))}")
     }
 
     /** e.g. "۱۴۰۴/۰۵/۱۴" with Persian digits */
-    fun formatDatePersian(epochMillis: Long): String {
-        val s = formatDate(epochMillis)
-        return s.map { when (it) {
+    private fun toPersianDigits(value: String): String = value.map { ch ->
+        when (ch) {
             '0' -> '۰'; '1' -> '۱'; '2' -> '۲'; '3' -> '۳'; '4' -> '۴'
             '5' -> '۵'; '6' -> '۶'; '7' -> '۷'; '8' -> '۸'; '9' -> '۹'
-            else -> it
-        } }.joinToString("")
-    }
+            else -> ch
+        }
+    }.joinToString("")
+
+    fun formatDatePersian(epochMillis: Long): String = toPersianDigits(formatDate(epochMillis))
 
     /** e.g. "۱۴ مهر ۱۴۰۴" — friendly format */
     fun formatDateFriendly(epochMillis: Long): String {
         val (y, m, d) = fromEpochMillis(epochMillis)
-        return "$d ${MONTH_NAMES[m - 1]} $y"
+        return toPersianDigits("$d ${MONTH_NAMES[m - 1]} $y")
     }
 }

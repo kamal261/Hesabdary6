@@ -81,7 +81,8 @@ object SmsParser {
     // Keyword -> transaction type. Order matters: more specific phrases first.
     private val EXPENSE_KEYWORDS = listOf(
         "پرداخت قسط", "خرید", "برداشت", "کارمزد", "هزینه", "پرداخت اینترنتی",
-        "پرداخت شد", "انتقال به", "کسر از", "چک", "قبض", "حق بیمه"
+        "پرداخت شد", "انتقال به", "کسر از", "کسر گردید", "از حساب شما کسر", "از حساب شما پرید",
+        "چک", "قبض", "حق بیمه"
     )
     private val INCOME_KEYWORDS = listOf(
         "واریز", "دریافت وجه", "دریافت مبلغ", "واریزی", "به حساب شما", "بازگشت وجه", "سود سپرده"
@@ -90,7 +91,7 @@ object SmsParser {
     // Messages that only mention balance / OTP / promos, never a real txn.
     private val IGNORE_KEYWORDS = listOf(
         "موجودی شما", "رمز یکبار مصرف", "رمز پویا", "کد تایید", "کد فعال",
-        "تخفیف", "جشنواره", "تبلیغ", "OTP",
+        "تخفیف", "جشنواره", "تبلیغ", "OTP", "قرعه‌کشی", "قرعه کشی", "جایزه", "تسهیلات",
         // Carrier recharge-offer promo template ("with every 100,000 Toman recharge or credit
         // top-up, get X") -- was being counted as a real 100,000 Toman withdrawal, repeatedly,
         // in a real export.
@@ -292,7 +293,9 @@ object SmsParser {
         if (IGNORE_KEYWORDS.any { normalizedBody.contains(it) }) return SmsParseResult.Ignored
 
         val isKnownBank = isKnownBankSender(sender)
-        if (URL_REGEX.containsMatchIn(normalizedBody) && !isKnownBank) return SmsParseResult.Ignored
+        // A URL is a strong promotional/redirect signal. Keeping it out even for a known bank
+        // sender avoids treating tracking and loan-offer links as financial transactions.
+        if (URL_REGEX.containsMatchIn(normalizedBody)) return SmsParseResult.Ignored
 
         val workingBody = truncatePromoTail(normalizedBody)
 

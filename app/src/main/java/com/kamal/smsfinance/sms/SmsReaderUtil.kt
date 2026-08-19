@@ -12,7 +12,13 @@ import android.content.pm.PackageManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
-data class RawSms(val sender: String, val body: String, val timestamp: Long)
+data class RawSms(
+    val sender: String,
+    val body: String,
+    val timestamp: Long,
+    /** Telephony provider row id; null when a caller constructs a message manually. */
+    val id: String? = null
+)
 
 object SmsReaderUtil {
 
@@ -20,23 +26,43 @@ object SmsReaderUtil {
         ContextCompat.checkSelfPermission(context, Manifest.permission.READ_SMS) ==
             PackageManager.PERMISSION_GRANTED
 
-    /** Reads inbox SMS, optionally restricted to messages received at or after [sinceMillis].
-     * Pass null to read the entire inbox. Must only be called after READ_SMS is granted. */
-    suspend fun readInbox(context: Context, sinceMillis: Long? = null): List<RawSms> = withContext(Dispatchers.IO) {
+    /** Reads inbox SMS after a persisted cursor. The inclusive timestamp fallback is intentional:
+     * SMS providers may assign the same millisecond to multiple messages, while the optional id
+     * breaks ties for a stable incremental scan. */
+    suspend fun readInbox(
+        context: Context,
+        sinceMillis: Long? = null,
+        afterSmsId: String? = null
+    ): List<RawSms> = withContext(Dispatchers.IO) {
         if (!hasReadSmsPermission(context)) return@withContext emptyList()
 
         val results = mutableListOf<RawSms>()
         val uri: Uri = Telephony.Sms.Inbox.CONTENT_URI
         val projection = arrayOf(
+            Telephony.Sms._ID,
             Telephony.Sms.ADDRESS,
             Telephony.Sms.BODY,
             Telephony.Sms.DATE
         )
-        val selection = if (sinceMillis != null) "${Telephony.Sms.DATE} >= ?" else null
-        val selectionArgs = if (sinceMillis != null) arrayOf(sinceMillis.toString()) else null
+        val selection: String?
+        val selectionArgs: Array<String>?
+        if (sinceMillis != null && afterSmsId != null) {
+            selection = "(${Telephony.Sms.DATE} > ?) OR (${Telephony.Sms.DATE} = ? AND ${Telephony.Sms._ID} > ?)"
+            selectionArgs = arrayOf(sinceMillis.toString(), sinceMillis.toString(), afterSmsId)
+        } else if (sinceMillis != null) {
+            selection = "${Telephony.Sms.DATE} >= ?"
+            selectionArgs = arrayOf(sinceMillis.toString())
+        } else if (afterSmsId != null) {
+            selection = "${Telephony.Sms._ID} > ?"
+            selectionArgs = arrayOf(afterSmsId)
+        } else {
+            selection = null
+            selectionArgs = null
+        }
 
-        context.contentResolver.query(uri, projection, selection, selectionArgs, "${Telephony.Sms.DATE} DESC")
+        context.contentResolver.query(uri, projection, selection, selectionArgs, "${Telephony.Sms.DATE} ASC, ${Telephony.Sms._ID} ASC")
             ?.use { cursor ->
+                val idIdx = cursor.getColumnIndexOrThrow(Telephony.Sms._ID)
                 val addressIdx = cursor.getColumnIndexOrThrow(Telephony.Sms.ADDRESS)
                 val bodyIdx = cursor.getColumnIndexOrThrow(Telephony.Sms.BODY)
                 val dateIdx = cursor.getColumnIndexOrThrow(Telephony.Sms.DATE)
@@ -45,7 +71,8 @@ object SmsReaderUtil {
                     val sender = cursor.getString(addressIdx) ?: continue
                     val body = cursor.getString(bodyIdx) ?: continue
                     val date = cursor.getLong(dateIdx)
-                    results.add(RawSms(sender, body, date))
+                    val id = cursor.getString(idIdx)
+                    results.add(RawSms(sender, body, date, id))
                 }
             }
         results

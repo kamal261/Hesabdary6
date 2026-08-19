@@ -1,10 +1,10 @@
 package com.kamal.smsfinance.data
 
-import org.junit.jupiter.api.Assertions.assertEquals
-import org.junit.jupiter.api.Assertions.assertNotNull
-import org.junit.jupiter.api.Assertions.assertNull
-import org.junit.jupiter.api.Assertions.assertTrue
-import org.junit.jupiter.api.Test
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
+import org.junit.Test
 
 class RuleEngineTest {
 
@@ -92,11 +92,11 @@ class RuleEngineTest {
         // converge on the same normalized form.
         val zwnjRules = listOf(rule("می\u200Cخواهم", categoryId = 1L))
         val spaceTextResult = engine.evaluate("می خواهم پرداخت کنم", zwnjRules)
-        assertEquals(1L, spaceTextResult.categoryId, "rule with ZWNJ should match text with space")
+        assertEquals("rule with ZWNJ should match text with space", 1L, spaceTextResult.categoryId)
 
         val spaceRules = listOf(rule("می خواهم", categoryId = 2L))
         val zwnjTextResult = engine.evaluate("می\u200Cخواهم پرداخت کنم", spaceRules)
-        assertEquals(2L, zwnjTextResult.categoryId, "rule with space should match text with ZWNJ")
+        assertEquals("rule with space should match text with ZWNJ", 2L, zwnjTextResult.categoryId)
     }
 
     @Test

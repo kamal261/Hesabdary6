@@ -96,4 +96,25 @@ interface TransactionDao {
 
     @Query("SELECT * FROM transactions WHERE id = :id")
     suspend fun getById(id: Long): Transaction?
+
+    @Query("""
+        SELECT * FROM transactions
+        WHERE amountToman = :amount
+          AND date BETWEEN :from AND :to
+          AND linkedCheckId IS NULL
+        ORDER BY ABS(date - :centerDate) ASC
+    """)
+    suspend fun findCheckCandidates(amount: Long, from: Long, to: Long, centerDate: Long): List<Transaction>
+
+    @Query("SELECT * FROM transactions WHERE transferGroupId = :groupId ORDER BY date ASC")
+    fun byTransferGroup(groupId: Long): Flow<List<Transaction>>
+
+    @Query("SELECT * FROM transactions WHERE transferGroupId = :groupId ORDER BY date ASC")
+    suspend fun byTransferGroupOnce(groupId: Long): List<Transaction>
+
+    @Query("UPDATE transactions SET transferGroupId = :groupId WHERE id IN (:transactionIds)")
+    suspend fun assignTransferGroup(transactionIds: List<Long>, groupId: Long)
+
+    @Query("UPDATE transactions SET linkedCheckId = :checkId WHERE id = :transactionId")
+    suspend fun linkCheck(transactionId: Long, checkId: Long?)
 }
