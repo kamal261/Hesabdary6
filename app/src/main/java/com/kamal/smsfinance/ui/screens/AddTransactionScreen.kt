@@ -22,7 +22,6 @@ import com.kamal.smsfinance.data.Category
 import com.kamal.smsfinance.data.CategoryKind
 import com.kamal.smsfinance.data.Counterparty
 import com.kamal.smsfinance.data.TransactionType
-import com.kamal.smsfinance.data.relevantCategoryKinds
 import com.kamal.smsfinance.ui.components.CategoryPicker
 import com.kamal.smsfinance.ui.theme.GreenIncome
 import com.kamal.smsfinance.ui.theme.RedExpense
@@ -51,15 +50,6 @@ fun AddTransactionScreen(
     var bank by remember { mutableStateOf("") }
     var description by remember { mutableStateOf("") }
     var selectedCategory by remember { mutableStateOf<Category?>(null) }
-    // Ported from Hesabdary6-main rev22: clears a now-invalid category selection when the user
-    // switches type after already picking one (e.g. picked a "وصول طلب" category, then
-    // switched to برداشت) -- otherwise the picker just hides the chip, but the stale selection
-    // would still be saved.
-    LaunchedEffect(type) {
-        if (selectedCategory != null && selectedCategory!!.kind !in relevantCategoryKinds(type)) {
-            selectedCategory = null
-        }
-    }
     var selectedCounterparty by remember { mutableStateOf<Counterparty?>(null) }
     var isIndirectSettlement by remember { mutableStateOf(false) }
     var showDetails by remember { mutableStateOf(false) }
@@ -94,7 +84,7 @@ fun AddTransactionScreen(
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
             // --- Quick path: amount -> type -> confirm, big and friendly ---
-            QuickTypeToggle(selected = type, onSelect = { type = it })
+            QuickTypeToggle(selected = type, onSelect = { type = it; selectedCategory = null })
 
             OutlinedTextField(
                 value = amountText,
@@ -158,9 +148,10 @@ fun AddTransactionScreen(
                         Text("دسته‌بندی", style = MaterialTheme.typography.titleSmall)
                         Spacer(Modifier.height(4.dp))
                         CategoryPicker(
-                            categories = categories.filter { it.kind in relevantCategoryKinds(type) },
+                            categories = categories,
                             usageCounts = categoryUsageCounts,
                             selectedId = selectedCategory?.id,
+                            initialKind = if (type == TransactionType.INCOME) CategoryKind.INCOME else CategoryKind.EXPENSE,
                             onSelect = { id -> selectedCategory = categories.firstOrNull { it.id == id } }
                         )
                     }

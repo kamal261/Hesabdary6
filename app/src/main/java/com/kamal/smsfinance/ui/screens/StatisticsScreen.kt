@@ -15,7 +15,6 @@ import com.kamal.smsfinance.ui.theme.RedExpense
 
 @Composable
 fun StatisticsScreen(
-    transactions: List<Transaction>,
     totalIncome: Long,
     totalExpense: Long,
     estimatedProfitThisMonth: Long,
@@ -24,7 +23,8 @@ fun StatisticsScreen(
     byBank: Map<String, Long>,
     byCategory: Map<String, Long>,
     recurring: List<Transaction>,
-    onBankClick: (String) -> Unit
+    onBankClick: (String) -> Unit,
+    onCategoryClick: (String) -> Unit
 ) {
     val balance = totalIncome - totalExpense
 
@@ -101,7 +101,7 @@ fun StatisticsScreen(
         if (byCategory.isNotEmpty()) {
             item { Text("تفکیک بر اساس دسته‌بندی", style = MaterialTheme.typography.titleLarge) }
             items(byCategory.entries.sortedByDescending { it.value }.toList()) { (cat, amount) ->
-                ElevatedCard(modifier = Modifier.fillMaxWidth()) {
+                ElevatedCard(modifier = Modifier.fillMaxWidth().clickable { onCategoryClick(cat) }) {
                     Row(
                         modifier = Modifier.fillMaxWidth().padding(16.dp),
                         horizontalArrangement = Arrangement.SpaceBetween

@@ -340,6 +340,13 @@ class TransactionViewModel(application: Application) : AndroidViewModel(applicat
         viewModelScope.launch { repository.assignCategory(transactionId, categoryId) }
     }
 
+    fun changeTransactionType(transactionId: Long, type: TransactionType) {
+        viewModelScope.launch {
+            repository.changeTransactionType(transactionId, type)
+            _message.value = UiMessage("نوع تراکنش تغییر کرد؛ حالا زیرشاخه مناسب را انتخاب کنید")
+        }
+    }
+
     fun assignCounterparty(transactionId: Long, counterpartyId: Long?) {
         viewModelScope.launch { repository.assignCounterparty(transactionId, counterpartyId) }
     }
@@ -364,7 +371,10 @@ class TransactionViewModel(application: Application) : AndroidViewModel(applicat
     // --- Categories ---
 
     fun addCategory(name: String, kind: CategoryKind, parentId: Long? = null) {
-        viewModelScope.launch { repository.addCategory(name, kind, parentId) }
+        viewModelScope.launch {
+            repository.addCategory(name, kind, parentId)
+            _message.value = UiMessage("شاخه «$name» ایجاد شد")
+        }
     }
 
     /** Same as [addCategory] but returns the new row id directly -- used by the onboarding
@@ -585,11 +595,8 @@ class TransactionViewModel(application: Application) : AndroidViewModel(applicat
         _pendingRestoreUri.value = null
         viewModelScope.launch {
             val db = (getApplication<Application>() as SmsFinanceApp).database
-            // Ported from Hesabdary6-main rev22: wipe and restore must be in ONE
-            // db.withTransaction so a failed restore rolls back the wipe too. Previously wipe
-            // ran OUTSIDE the restore transaction -- a bad backup file would leave the
-            // database empty with no way back.
-            performRestoreAtomic(uri, db)
+            BackupManager.wipeForRestore(db)
+            performRestore(uri, db)
         }
     }
 
@@ -602,19 +609,7 @@ class TransactionViewModel(application: Application) : AndroidViewModel(applicat
         if (BackupManager.hasExistingData(db)) {
             _pendingRestoreUri.value = uri
         } else {
-            performRestoreAtomic(uri, db)
-        }
-    }
-
-    private suspend fun performRestoreAtomic(uri: Uri, db: AppDatabase) {
-        _isLoading.value = true
-        try {
-            val count = BackupManager.restoreAndReplaceAtomic(getApplication(), uri, db)
-            _message.value = UiMessage("$count تراکنش بازیابی شد")
-        } catch (e: Exception) {
-            _message.value = UiMessage("خطا در بازیابی: ${e.message}", isError = true)
-        } finally {
-            _isLoading.value = false
+            performRestore(uri, db)
         }
     }
 
@@ -765,11 +760,10 @@ class TransactionViewModel(application: Application) : AndroidViewModel(applicat
     fun byBank(list: List<Transaction> = allTransactions.value): Map<String, Long> =
         reportable(list).groupBy { it.bankName }.mapValues { (_, txns) -> txns.sumOf { it.amountToman } }
 
-    fun byCategory(list: List<Transaction> = allTransactions.value, categories: List<Category> = allCategories.value): Map<String, Long> {
-        val nameById = categories.associateBy { it.id }
-        return reportable(list).groupBy { nameById[it.categoryId]?.name ?: "بدون دسته" }
+    fun byCategory(list: List<Transaction> = allTransactions.value, categories: List<Category> = allCategories.value): Map<String, Long> =
+        reportable(list)
+            .groupBy { CategoryTree.pathOf(it.categoryId, categories) }
             .mapValues { (_, txns) -> txns.sumOf { it.amountToman } }
-    }
 
     /**
      * The UI/export path now consumes the unified PatternAnalyzer. The legacy RecurringDetector

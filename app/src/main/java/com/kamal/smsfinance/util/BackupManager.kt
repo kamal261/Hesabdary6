@@ -175,32 +175,14 @@ object BackupManager {
      * into a non-empty database -- see the class doc-comment. The whole
      * restore runs inside a single database transaction: if anything throws
      * partway through, nothing from this call is left committed.
-     *
-     * @param wipeFirst when true, wipes transactions/counterparties/checks/rules INSIDE the
-     * same transaction as the restore (ported from Hesabdary6-main rev22) -- previously the
-     * caller ran wipeForRestore() as a separate call before this one, so a restore that failed
-     * partway through left the database empty with no way back. Categories are still deduped
-     * by name rather than wiped, same as before, so user-added custom categories survive.
      */
-    /** Alias used by TransactionViewModel.performRestoreAtomic() -- wipe-then-restore as a
-     * single atomic call, i.e. restoreBackup(wipeFirst = true). */
-    suspend fun restoreAndReplaceAtomic(context: Context, uri: Uri, db: AppDatabase): Int =
-        restoreBackup(context, uri, db, wipeFirst = true)
-
-    suspend fun restoreBackup(context: Context, uri: Uri, db: AppDatabase, wipeFirst: Boolean = false): Int =
+    suspend fun restoreBackup(context: Context, uri: Uri, db: AppDatabase): Int =
         withContext(Dispatchers.IO) {
             val text = context.contentResolver.openInputStream(uri)?.bufferedReader()?.readText()
                 ?: return@withContext 0
             val root = JSONObject(text)
 
             db.withTransaction {
-                if (wipeFirst) {
-                    db.transactionDao().deleteAll()
-                    db.counterpartyDao().getAllOnce().forEach { db.counterpartyDao().delete(it) }
-                    db.checkDao().getAllOnce().forEach { db.checkDao().delete(it) }
-                    db.smartRuleDao().getAllRulesOnce().forEach { db.smartRuleDao().deleteRule(it) }
-                }
-
                 // oldId -> newId for every table another table can point to. Built while
                 // restoring each table below; a lookup with a null result (no entry, or the
                 // JSON field itself was null) resolves to null, which is a valid "no

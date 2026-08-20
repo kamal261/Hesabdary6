@@ -64,6 +64,9 @@ class TransactionRepository(
     suspend fun assignCategory(transactionId: Long, categoryId: Long?) =
         transactionDao.assignCategory(transactionId, categoryId)
 
+    suspend fun changeTransactionType(transactionId: Long, type: TransactionType) =
+        transactionDao.changeTypeAndClearCategory(transactionId, type)
+
     suspend fun assignCounterparty(transactionId: Long, counterpartyId: Long?) =
         transactionDao.assignCounterparty(transactionId, counterpartyId)
 

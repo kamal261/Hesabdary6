@@ -72,10 +72,12 @@ fun ReviewSummaryCard(
     unidentifiedSmsCount: Int,
     suggestionCount: Int,
     checksDueSoonCount: Int,
+    notesCount: Int = 0,
     onOpenUnidentifiedSms: () -> Unit,
-    onOpenChecks: () -> Unit
+    onOpenChecks: () -> Unit,
+    onOpenNotes: () -> Unit = {}
 ) {
-    val total = uncategorizedCount + unidentifiedSmsCount + suggestionCount + checksDueSoonCount
+    val total = uncategorizedCount + unidentifiedSmsCount + suggestionCount + checksDueSoonCount + notesCount
     if (total == 0) return
     ElevatedCard(modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -99,6 +101,11 @@ fun ReviewSummaryCard(
             if (checksDueSoonCount > 0) {
                 TextButton(onClick = onOpenChecks) {
                     Text("چک‌های نزدیک سررسید ($checksDueSoonCount)")
+                }
+            }
+            if (notesCount > 0) {
+                TextButton(onClick = onOpenNotes) {
+                    Text("همه یادداشت‌ها ($notesCount)")
                 }
             }
         }

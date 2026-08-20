@@ -24,6 +24,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.foundation.layout.padding
 import androidx.compose.ui.platform.LocalContext
 import com.kamal.smsfinance.permission.SmsPermissionGate
+import com.kamal.smsfinance.data.CategoryTree
 import com.kamal.smsfinance.ui.TransactionViewModel
 import com.kamal.smsfinance.ui.screens.*
 import com.kamal.smsfinance.ui.components.ScanRangeDialog
@@ -44,6 +45,8 @@ private sealed class Overlay {
     object Help : Overlay()
     data class CounterpartyProfile(val id: Long) : Overlay()
     data class BankTransactions(val bank: String) : Overlay()
+    data class CategoryTransactions(val path: String) : Overlay()
+    object Notes : Overlay()
     data class SmsContext(val sender: String, val txnTimestamp: Long) : Overlay()
 }
 
@@ -273,6 +276,24 @@ private fun AppRoot(
             )
             return
         }
+        is Overlay.CategoryTransactions -> {
+            TransactionDrilldownScreen(
+                title = "تراکنش‌های دسته ${current.path}",
+                transactions = transactions.filter { CategoryTree.pathOf(it.categoryId, categories) == current.path },
+                categories = categories,
+                onBack = { overlay = null }
+            )
+            return
+        }
+        Overlay.Notes -> {
+            NotesScreen(
+                transactions = transactions,
+                categories = categories,
+                onBack = { overlay = null },
+                onSaveNote = { txn, notes -> viewModel.updateTransactionNotes(txn.id, notes) }
+            )
+            return
+        }
         Overlay.Help -> {
             HelpScreen(onBack = { overlay = null })
             return
@@ -332,6 +353,9 @@ private fun AppRoot(
                     val uncategorizedCount = remember(transactions) {
                         transactions.count { it.categoryId == null }
                     }
+                    val notesCount = remember(transactions) {
+                        transactions.count { !it.notes.isNullOrBlank() }
+                    }
                     val (owedToMe, iOwe) = remember(transactions, categories) {
                         viewModel.counterpartyBalanceSummary(transactions)
                     }
@@ -354,6 +378,7 @@ private fun AppRoot(
                         recurringIds = recurringIds,
                         isLoading = isLoading,
                         unidentifiedSmsCount = unidentifiedSms.size,
+                        notesCount = notesCount,
                         uncategorizedCount = uncategorizedCount,
                         dashboard = DashboardData(
                             todayIncome = todayIncome,
@@ -377,8 +402,11 @@ private fun AppRoot(
                         onDelete = { viewModel.deleteTransaction(it) },
                         onAddManual = { overlay = Overlay.AddManual },
                         onAssignCategory = { txn, catId -> viewModel.assignCategory(txn.id, catId) },
+                        onChangeType = { txn, type -> viewModel.changeTransactionType(txn.id, type) },
+                        onCreateCategory = { name, kind, parentId -> viewModel.addCategory(name, kind, parentId) },
                         onCreateRule = { pattern, categoryId -> viewModel.addRule(pattern, categoryId, null) },
                         onOpenUnidentifiedSms = { overlay = Overlay.UnidentifiedSms },
+                        onOpenNotes = { overlay = Overlay.Notes },
                         onOpenChecks = { tab = Tab.CHECKS },
                         onOpenCounterparties = { tab = Tab.COUNTERPARTIES },
                         onSaveNotes = { txn, notes -> viewModel.updateTransactionNotes(txn.id, notes) },
@@ -408,7 +436,6 @@ private fun AppRoot(
                     onDelete = { viewModel.deleteCheck(it) }
                 )
                 Tab.STATS -> StatisticsScreen(
-                    transactions = transactions,
                     totalIncome = viewModel.totalIncome(transactions),
                     totalExpense = viewModel.totalExpense(transactions),
                     estimatedProfitThisMonth = viewModel.estimatedProfit(viewModel.thisMonthTransactions(transactions), categories),
@@ -417,7 +444,8 @@ private fun AppRoot(
                     byBank = viewModel.byBank(transactions),
                     byCategory = viewModel.byCategory(transactions, categories),
                     recurring = viewModel.recurringOnly(transactions),
-                    onBankClick = { bank -> overlay = Overlay.BankTransactions(bank) }
+                    onBankClick = { bank -> overlay = Overlay.BankTransactions(bank) },
+                    onCategoryClick = { path -> overlay = Overlay.CategoryTransactions(path) }
                 )
                 Tab.SETTINGS -> SettingsScreen(
                     themeMode = themeMode,

@@ -18,10 +18,10 @@ import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.kamal.smsfinance.data.Category
+import com.kamal.smsfinance.data.CategoryTree
 import com.kamal.smsfinance.data.SmartSuggestion
 import com.kamal.smsfinance.data.Transaction
 import com.kamal.smsfinance.data.TransactionType
-import com.kamal.smsfinance.data.relevantCategoryKinds
 import com.kamal.smsfinance.ui.components.CategoryPicker
 import com.kamal.smsfinance.ui.components.TodayDashboardCard
 import com.kamal.smsfinance.ui.theme.GreenIncome
@@ -37,6 +37,7 @@ fun TransactionListScreen(
     recurringIds: Set<Long>,
     isLoading: Boolean,
     unidentifiedSmsCount: Int,
+    notesCount: Int = 0,
     uncategorizedCount: Int = 0,
     dashboard: DashboardData,
     smartSuggestions: List<SmartSuggestion> = emptyList(),
@@ -53,8 +54,11 @@ fun TransactionListScreen(
     onDelete: (Transaction) -> Unit,
     onAddManual: () -> Unit,
     onAssignCategory: (Transaction, Long?) -> Unit,
+    onChangeType: (Transaction, TransactionType) -> Unit = { _, _ -> },
+    onCreateCategory: (name: String, kind: com.kamal.smsfinance.data.CategoryKind, parentId: Long?) -> Unit = { _, _, _ -> },
     onCreateRule: (pattern: String, categoryId: Long?) -> Unit,
     onOpenUnidentifiedSms: () -> Unit,
+    onOpenNotes: () -> Unit = {},
     onOpenChecks: () -> Unit,
     onOpenCounterparties: () -> Unit,
     onSaveNotes: (Transaction, String?) -> Unit,
@@ -62,16 +66,22 @@ fun TransactionListScreen(
 ) {
     var query by remember { mutableStateOf("") }
     var onlyUncategorized by remember { mutableStateOf(false) }
+    var onlyWithNotes by remember { mutableStateOf(false) }
     var detailFor by remember { mutableStateOf<Transaction?>(null) }
     var ruleSuggestionFor by remember { mutableStateOf<Pair<Transaction, Long>?>(null) }
+    var pendingRuleSuggestionFor by remember { mutableStateOf<Pair<Transaction, Long>?>(null) }
 
-    val filtered = remember(transactions, query, onlyUncategorized) {
+    val filtered = remember(transactions, query, onlyUncategorized, onlyWithNotes) {
         transactions
             .filter { !onlyUncategorized || it.categoryId == null }
-            .filter { query.isBlank() || it.description.contains(query, true) || it.bankName.contains(query, true) }
+            .filter { !onlyWithNotes || !it.notes.isNullOrBlank() }
+            .filter {
+                query.isBlank() ||
+                    it.description.contains(query, true) ||
+                    it.bankName.contains(query, true) ||
+                    it.notes?.contains(query, true) == true
+            }
     }
-    val categoryById = remember(categories) { categories.associateBy { it.id } }
-
     Scaffold(
         floatingActionButton = {
             FloatingActionButton(onClick = onAddManual) {
@@ -121,7 +131,9 @@ fun TransactionListScreen(
                         unidentifiedSmsCount = unidentifiedSmsCount,
                         suggestionCount = smartSuggestions.size,
                         checksDueSoonCount = dashboard.checksDueSoonCount,
+                        notesCount = notesCount,
                         onOpenUnidentifiedSms = onOpenUnidentifiedSms,
+                        onOpenNotes = onOpenNotes,
                         onOpenChecks = onOpenChecks
                     )
                 }
@@ -173,6 +185,11 @@ fun TransactionListScreen(
                             onClick = { onlyUncategorized = !onlyUncategorized },
                             label = { Text("فقط بدون دسته") }
                         )
+                        FilterChip(
+                            selected = onlyWithNotes,
+                            onClick = { onlyWithNotes = !onlyWithNotes },
+                            label = { Text("فقط یادداشت‌دار") }
+                        )
                     }
                 }
                 item {
@@ -190,7 +207,7 @@ fun TransactionListScreen(
                     items(filtered, key = { it.id }) { txn ->
                         TransactionCard(
                             txn = txn,
-                            categoryName = categoryById[txn.categoryId]?.name,
+                            categoryName = CategoryTree.pathOf(txn.categoryId, categories),
                             isRecurring = txn.id in recurringIds,
                             onDelete = { onDelete(txn) },
                             onClick = { detailFor = txn }
@@ -205,19 +222,32 @@ fun TransactionListScreen(
     detailFor?.let { txn ->
         TransactionDetailDialog(
             transaction = txn,
-            currentCategoryName = categoryById[txn.categoryId]?.name,
+            currentCategoryName = CategoryTree.pathOf(txn.categoryId, categories),
             categories = categories,
             categoryUsageCounts = categoryUsageCounts,
-            onDismiss = { detailFor = null },
+            onCreateCategory = onCreateCategory,
+            onChangeType = { type ->
+                onChangeType(txn, type)
+                detailFor = txn.copy(type = type, categoryId = null)
+            },
+            onDismiss = {
+                detailFor = null
+                pendingRuleSuggestionFor?.let {
+                    ruleSuggestionFor = it
+                    pendingRuleSuggestionFor = null
+                }
+            },
             onSelectCategory = { categoryId ->
                 onAssignCategory(txn, categoryId)
-                detailFor = null
-                if (categoryId != null) ruleSuggestionFor = txn to categoryId
+                if (categoryId != null) pendingRuleSuggestionFor = txn to categoryId
             },
-            onSaveNotes = { notes -> onSaveNotes(txn, notes) },
-            onViewSmsContext = {
+                            onSaveNotes = { notes -> onSaveNotes(txn, notes) },
+
+                            onViewSmsContext = {
+
                 val sender = txn.smsSender
                 if (sender != null) {
+                    pendingRuleSuggestionFor = null
                     detailFor = null
                     onViewSmsContext(sender, txn.date)
                 }
@@ -350,6 +380,8 @@ private fun TransactionDetailDialog(
     currentCategoryName: String?,
     categories: List<Category>,
     categoryUsageCounts: Map<Long, Int>,
+    onCreateCategory: (name: String, kind: com.kamal.smsfinance.data.CategoryKind, parentId: Long?) -> Unit,
+    onChangeType: (TransactionType) -> Unit,
     onDismiss: () -> Unit,
     onSelectCategory: (Long?) -> Unit,
     onSaveNotes: (String?) -> Unit,
@@ -428,31 +460,27 @@ private fun TransactionDetailDialog(
                 }
 
                 Spacer(Modifier.height(16.dp))
-                Text("یادداشت", style = MaterialTheme.typography.titleMedium)
-                Spacer(Modifier.height(4.dp))
-                OutlinedTextField(
-                    value = notesText,
-                    onValueChange = { notesText = it },
-                    placeholder = { Text("مثلاً: علی ۱۲ جفت کفش هم آورده، از حسابش کم کنم") },
-                    modifier = Modifier.fillMaxWidth(),
-                    minLines = 2
-                )
-                if (notesText != (transaction.notes ?: "")) {
-                    Spacer(Modifier.height(4.dp))
-                    TextButton(onClick = { onSaveNotes(notesText) }, modifier = Modifier.align(Alignment.End)) {
-                        Text("ذخیره یادداشت")
-                    }
-                }
-
-                Spacer(Modifier.height(16.dp))
                 Text("دسته‌بندی: ${currentCategoryName ?: "بدون دسته"}", style = MaterialTheme.typography.titleMedium)
                 Spacer(Modifier.height(8.dp))
 
                 CategoryPicker(
-                    categories = categories.filter { it.kind in relevantCategoryKinds(transaction.type) },
+                    categories = categories,
                     usageCounts = categoryUsageCounts,
                     selectedId = transaction.categoryId,
-                    onSelect = onSelectCategory
+                    onSelect = onSelectCategory,
+                    onCreateCategory = onCreateCategory,
+                    onSideChange = { kind ->
+                        onChangeType(
+                            if (kind == com.kamal.smsfinance.data.CategoryKind.INCOME || kind == com.kamal.smsfinance.data.CategoryKind.DEBT_COLLECTION)
+                                TransactionType.INCOME
+                            else
+                                TransactionType.EXPENSE
+                        )
+                    },
+                    initialKind = if (transaction.type == TransactionType.INCOME) com.kamal.smsfinance.data.CategoryKind.INCOME else com.kamal.smsfinance.data.CategoryKind.EXPENSE,
+                    noteText = notesText,
+                    onNoteChange = { notesText = it },
+                    onSaveNote = { onSaveNotes(notesText) }
                 )
             }
         },
@@ -496,11 +524,6 @@ private fun TransactionCard(
     val dateStr = remember(txn.date) {
         JalaliDate.formatDateTime(txn.date)
     }
-    // Ported from Hesabdary6-main rev21: this delete button previously called onDelete()
-    // directly on click, with zero confirmation -- a real irreversible-data-loss risk, and a
-    // direct violation of the product's own core principle ("هیچ تصمیم مالی غیرقابل‌بازگشت
-    // بدون تأیید صریح کاربر").
-    var showDeleteConfirm by remember { mutableStateOf(false) }
 
     ElevatedCard(modifier = Modifier.fillMaxWidth().clickable(onClick = onClick)) {
         Row(
@@ -538,10 +561,31 @@ private fun TransactionCard(
                     }
                 }
                 Spacer(Modifier.height(4.dp))
-                AssistChip(
-                    onClick = onClick,
-                    label = { Text(categoryName ?: "بدون دسته", style = MaterialTheme.typography.labelLarge) }
-                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment = Alignment.Top
+                ) {
+                    Column(modifier = Modifier.weight(1f).clickable(onClick = onClick)) {
+                        Text(
+                            "دسته فعلی",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Text(
+                            categoryName ?: "بدون دسته",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.primary,
+                            softWrap = true
+                        )
+                    }
+                    if (!txn.notes.isNullOrBlank()) {
+                        AssistChip(
+                            onClick = onClick,
+                            label = { Text("یادداشت", style = MaterialTheme.typography.labelLarge) }
+                        )
+                    }
+                }
             }
             Spacer(Modifier.width(8.dp))
             Column(horizontalAlignment = Alignment.End) {
@@ -551,24 +595,10 @@ private fun TransactionCard(
                     fontWeight = FontWeight.Bold,
                     style = MaterialTheme.typography.titleMedium
                 )
-                IconButton(onClick = { showDeleteConfirm = true }) {
+                IconButton(onClick = onDelete) {
                     Icon(Icons.Filled.DeleteOutline, contentDescription = "حذف", tint = MaterialTheme.colorScheme.outline)
                 }
             }
         }
-    }
-
-    if (showDeleteConfirm) {
-        AlertDialog(
-            onDismissRequest = { showDeleteConfirm = false },
-            title = { Text("حذف این تراکنش؟") },
-            text = { Text("${"%,d".format(txn.amountToman)} تومان — ${txn.description}\nاین عمل قابل بازگشت نیست.") },
-            confirmButton = {
-                TextButton(onClick = { showDeleteConfirm = false; onDelete() }) {
-                    Text("حذف", color = MaterialTheme.colorScheme.error)
-                }
-            },
-            dismissButton = { TextButton(onClick = { showDeleteConfirm = false }) { Text("انصراف") } }
-        )
     }
 }

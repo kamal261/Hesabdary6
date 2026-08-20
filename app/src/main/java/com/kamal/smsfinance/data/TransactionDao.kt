@@ -88,6 +88,9 @@ interface TransactionDao {
     @Query("UPDATE transactions SET categoryId = :categoryId WHERE id = :transactionId")
     suspend fun assignCategory(transactionId: Long, categoryId: Long?)
 
+    @Query("UPDATE transactions SET type = :type, categoryId = NULL WHERE id = :transactionId")
+    suspend fun changeTypeAndClearCategory(transactionId: Long, type: TransactionType)
+
     @Query("UPDATE transactions SET counterpartyId = :counterpartyId WHERE id = :transactionId")
     suspend fun assignCounterparty(transactionId: Long, counterpartyId: Long?)
 
