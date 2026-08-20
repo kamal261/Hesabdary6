@@ -21,6 +21,7 @@ import com.kamal.smsfinance.data.Category
 import com.kamal.smsfinance.data.SmartSuggestion
 import com.kamal.smsfinance.data.Transaction
 import com.kamal.smsfinance.data.TransactionType
+import com.kamal.smsfinance.data.relevantCategoryKinds
 import com.kamal.smsfinance.ui.components.CategoryPicker
 import com.kamal.smsfinance.ui.components.TodayDashboardCard
 import com.kamal.smsfinance.ui.theme.GreenIncome
