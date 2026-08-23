@@ -36,6 +36,7 @@ fun NotesScreen(
 ) {
     var query by remember { mutableStateOf("") }
     var selected by remember { mutableStateOf<Transaction?>(null) }
+    val categoryPaths = remember(categories) { CategoryTree.pathsOf(categories) }
 
     val notes = remember(transactions, query, categories) {
         transactions
@@ -45,7 +46,7 @@ fun NotesScreen(
                     txn.notes.orEmpty().contains(query, ignoreCase = true) ||
                     txn.description.contains(query, ignoreCase = true) ||
                     txn.bankName.contains(query, ignoreCase = true) ||
-                    CategoryTree.pathOf(txn.categoryId, categories).contains(query, ignoreCase = true)
+                    (categoryPaths[txn.categoryId] ?: "بدون دسته").contains(query, ignoreCase = true)
             }
             .sortedByDescending { it.date }
     }
@@ -94,7 +95,7 @@ fun NotesScreen(
                     items(notes, key = { it.id }) { txn ->
                         NoteCard(
                             transaction = txn,
-                            categoryPath = CategoryTree.pathOf(txn.categoryId, categories),
+                            categoryPath = categoryPaths[txn.categoryId] ?: "بدون دسته",
                             onClick = { selected = txn }
                         )
                     }
@@ -107,7 +108,7 @@ fun NotesScreen(
     selected?.let { txn ->
         NoteDetailDialog(
             transaction = txn,
-            categoryPath = CategoryTree.pathOf(txn.categoryId, categories),
+            categoryPath = categoryPaths[txn.categoryId] ?: "بدون دسته",
             onDismiss = { selected = null },
             onSave = { updatedNotes ->
                 onSaveNote(txn, updatedNotes)

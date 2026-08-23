@@ -21,6 +21,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.kamal.smsfinance.data.CategoryKind
+import com.kamal.smsfinance.ui.OnboardingScanSummary
 import com.kamal.smsfinance.util.normalizeDigits
 import com.kamal.smsfinance.util.toPositiveLongOrNull
 import kotlinx.coroutines.launch
@@ -51,9 +52,9 @@ val ONBOARDING_CATEGORY_SUGGESTIONS = listOf(
 private data class TourTab(val title: String, val description: String)
 private val TOUR_TABS = listOf(
     TourTab("تراکنش‌ها", "لیست همه چیزهایی که از پیامک بانکی خونده شده. روی هرکدوم بزنید تا دسته‌بندیش کنید."),
-    TourTab("طرف‌حساب‌ها", "بدهی و طلب با دوستان، همکاران یا مشتری‌ها رو اینجا جدا پیگیری می‌کنید."),
+    TourTab("طلب و بدهی", "پول‌هایی که از دیگران طلب دارید یا باید به دیگران بدهید، اینجا جدا پیگیری می‌شود."),
     TourTab("چک‌ها", "چک‌های دریافتی و پرداختی، با یادآوری قبل از سررسید."),
-    TourTab("آمار", "جمع درآمد/هزینه، تفکیک بر اساس بانک و دسته، در یک نگاه."),
+    TourTab("دخل و خرج", "جمع درآمد و هزینه، تفکیک بر اساس بانک و دسته، در یک نگاه."),
     TourTab("تنظیمات", "دسته‌بندی‌ها، بکاپ، و همه چیزهایی که فقط یک‌بار لازمه تنظیم کنید.")
 )
 
@@ -61,11 +62,22 @@ private val TOUR_TABS = listOf(
 fun OnboardingFlow(
     onSetSmallAmount: (enabled: Boolean, threshold: Long) -> Unit,
     onCreateCategories: suspend (List<SuggestedCategory>) -> Unit,
-    onFinish: (scanDays: Int?) -> Unit
+    onFinish: (scanDays: Int?) -> Unit,
+    scanSummary: OnboardingScanSummary? = null,
+    scanRunning: Boolean = false,
+    onScanSummaryDone: () -> Unit = {}
 ) {
     var step by remember { mutableStateOf(0) }
     val totalSteps = 5
     val scope = androidx.compose.runtime.rememberCoroutineScope()
+
+    if (scanRunning || scanSummary != null) {
+        ScanResultStep(
+            summary = scanSummary,
+            onDone = onScanSummaryDone
+        )
+        return
+    }
 
     Scaffold(
         bottomBar = {
@@ -134,7 +146,8 @@ private fun WelcomeStep(onNext: () -> Unit) {
         )
         Spacer(Modifier.height(16.dp))
         listOf(
-            "همه‌چیز روی خودِ گوشی شما پردازش می‌شه و پیامک‌ها به سرور فرستاده نمی‌شن.",
+            "در حالت عادی، پیامک‌ها روی خودِ گوشی شما پردازش می‌شن و به سرور فرستاده نمی‌شن.",
+            "برنامه دائماً در پس‌زمینه اجرا نمی‌شه؛ هنگام بازکردن یا برگشتن به برنامه بررسی می‌کنه.",
             "برنامه فقط پیشنهاد می‌ده — هیچ تصمیمی (حذف، ادغام) بدون تأیید شما انجام نمی‌شه.",
             "اگر اجازه پیامک را ندهید، برنامه هنوز برای ثبت دستی و گزارش‌گیری قابل استفاده است."
         ).forEach { line ->
@@ -261,6 +274,57 @@ private fun CategoryBuilderStep(onNext: (List<SuggestedCategory>) -> Unit, onBac
                     }
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun ScanResultStep(
+    summary: OnboardingScanSummary?,
+    onDone: () -> Unit
+) {
+    StepScaffold(
+        title = if (summary == null) "در حال بررسی پیامک‌ها" else "بررسی پیامک‌ها تمام شد",
+        onNext = onDone,
+        nextLabel = if (summary == null) "لطفاً صبر کنید" else "ورود به برنامه",
+        nextEnabled = summary != null
+    ) {
+        if (summary == null) {
+            CircularProgressIndicator(modifier = Modifier.align(Alignment.CenterHorizontally))
+            Spacer(Modifier.height(20.dp))
+            Text(
+                "لطفاً چند لحظه صبر کنید. برنامه پیامک‌های انتخاب‌شده را بررسی می‌کند.",
+                style = MaterialTheme.typography.bodyLarge
+            )
+        } else {
+            Text(
+                "برنامه اولین بررسی را انجام داد. از این به بعد، اسکن‌های معمولی فقط پیامک‌های جدید را بررسی می‌کنند.",
+                style = MaterialTheme.typography.bodyLarge
+            )
+            Spacer(Modifier.height(20.dp))
+            SummaryRow("پیامک‌های بررسی‌شده", summary.scanned.toString())
+            SummaryRow("تراکنش‌های جدید", summary.added.toString())
+            SummaryRow("پیامک‌های ناشناس برای بررسی", summary.unidentified.toString())
+            Spacer(Modifier.height(16.dp))
+            Text(
+                "اگر تراکنشی بدون دسته بود، بعداً می‌توانید آن را از صفحه تراکنش‌ها دسته‌بندی کنید.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+    }
+}
+
+@Composable
+private fun SummaryRow(title: String, value: String) {
+    ElevatedCard(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(16.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(title, style = MaterialTheme.typography.titleMedium)
+            Text(value, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
         }
     }
 }

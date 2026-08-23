@@ -2,9 +2,19 @@ package com.kamal.smsfinance.data
 
 /** Pure helpers for presenting and resolving arbitrary-depth category trees. */
 object CategoryTree {
-    fun pathOf(categoryId: Long?, categories: List<Category>): String {
-        if (categoryId == null) return "بدون دسته"
+    fun pathOf(categoryId: Long?, categories: List<Category>): String =
+        pathOf(categoryId, categories.associateBy { it.id })
+
+    /** Precomputes every category path once for a stable category list. */
+    fun pathsOf(categories: List<Category>): Map<Long, String> {
         val byId = categories.associateBy { it.id }
+        return categories.associate { category ->
+            category.id to pathOf(category.id, byId)
+        }
+    }
+
+    private fun pathOf(categoryId: Long?, byId: Map<Long, Category>): String {
+        if (categoryId == null) return "بدون دسته"
         val path = mutableListOf<String>()
         val visited = mutableSetOf<Long>()
         var current = byId[categoryId]

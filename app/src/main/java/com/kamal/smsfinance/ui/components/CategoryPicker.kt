@@ -38,6 +38,7 @@ fun CategoryPicker(
     onSelect: (Long?) -> Unit,
     modifier: Modifier = Modifier,
     initialKind: CategoryKind? = null,
+    allowSideToggle: Boolean = true,
     onSideChange: ((CategoryKind) -> Unit)? = null,
     onCreateCategory: ((name: String, kind: CategoryKind, parentId: Long?) -> Unit)? = null,
     noteText: String? = null,
@@ -58,8 +59,9 @@ fun CategoryPicker(
 
     val allowedKinds = sideKinds(selectedSide)
     val byParent = remember(categories) { categories.groupBy { it.parentId } }
+    val categoryPaths = remember(categories) { CategoryTree.pathsOf(categories) }
 
-    fun pathOf(category: Category): String = CategoryTree.pathOf(category.id, categories)
+    fun pathOf(category: Category): String = categoryPaths[category.id] ?: "بدون دسته"
 
     val quickCategories = remember(categories, usageCounts, selectedSide) {
         val candidates = categories.filter { it.kind in allowedKinds && !it.isDefault }
@@ -98,26 +100,30 @@ fun CategoryPicker(
     }
 
     Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text("۱. نوع تراکنش", style = MaterialTheme.typography.titleSmall)
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            FilterChip(
-                selected = selectedSide == CategoryKind.EXPENSE,
-                onClick = {
-                    selectedSide = CategoryKind.EXPENSE
-                    kindFilter = null
-                    onSideChange?.invoke(CategoryKind.EXPENSE)
-                },
-                label = { Text("هزینه") }
-            )
-            FilterChip(
-                selected = selectedSide == CategoryKind.INCOME,
-                onClick = {
-                    selectedSide = CategoryKind.INCOME
-                    kindFilter = null
-                    onSideChange?.invoke(CategoryKind.INCOME)
-                },
-                label = { Text("درآمد") }
-            )
+        if (allowSideToggle) {
+            Text("۱. نوع تراکنش", style = MaterialTheme.typography.titleSmall)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FilterChip(
+                    selected = selectedSide == CategoryKind.EXPENSE,
+                    onClick = {
+                        selectedSide = CategoryKind.EXPENSE
+                        kindFilter = null
+                        onSideChange?.invoke(CategoryKind.EXPENSE)
+                    },
+                    label = { Text("هزینه") }
+                )
+                FilterChip(
+                    selected = selectedSide == CategoryKind.INCOME,
+                    onClick = {
+                        selectedSide = CategoryKind.INCOME
+                        kindFilter = null
+                        onSideChange?.invoke(CategoryKind.INCOME)
+                    },
+                    label = { Text("درآمد") }
+                )
+            }
+        } else {
+            Text("۱. نوع تراکنش: ${sideLabel(selectedSide)}", style = MaterialTheme.typography.titleSmall)
         }
 
         Text("۲. زیرشاخه ${sideLabel(selectedSide)}", style = MaterialTheme.typography.titleSmall)
@@ -245,11 +251,11 @@ private fun CreateCategoryFromPickerDialog(
 ) {
     var name by remember { mutableStateOf("") }
     var kind by remember(defaultKind) { mutableStateOf(defaultKind) }
-    var parentId by remember(kind, categories) {
+        var parentId by remember(kind, categories) {
         mutableStateOf(categories.firstOrNull { it.isDefault && it.kind == kind }?.id)
     }
-
-    fun pathOf(category: Category): String = CategoryTree.pathOf(category.id, categories)
+    val categoryPaths = remember(categories) { CategoryTree.pathsOf(categories) }
+    fun pathOf(category: Category): String = categoryPaths[category.id] ?: "بدون دسته"
     val eligibleParents = remember(categories, kind) {
         categories.filter { it.kind == kind }.sortedBy { pathOf(it) }
     }

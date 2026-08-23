@@ -53,16 +53,32 @@ class TransactionRepository(
     fun incomeBetween(from: Long, to: Long) = transactionDao.sumIncome(from, to)
     fun expenseBetween(from: Long, to: Long) = transactionDao.sumExpense(from, to)
 
-    suspend fun addManual(transaction: Transaction) {
+    suspend fun addManual(transaction: Transaction): Boolean {
+        if (!isCategoryCompatible(transaction.type, transaction.categoryId)) return false
         transactionDao.insert(transaction.copy(source = TransactionSource.MANUAL))
+        return true
     }
 
-    suspend fun update(transaction: Transaction) = transactionDao.update(transaction)
+    suspend fun update(transaction: Transaction): Boolean {
+        if (!isCategoryCompatible(transaction.type, transaction.categoryId)) return false
+        transactionDao.update(transaction)
+        return true
+    }
+
     suspend fun delete(transaction: Transaction) = transactionDao.delete(transaction)
     suspend fun deleteAll() = transactionDao.deleteAll()
 
-    suspend fun assignCategory(transactionId: Long, categoryId: Long?) =
+    suspend fun assignCategory(transactionId: Long, categoryId: Long?): Boolean {
+        val transaction = transactionDao.getById(transactionId) ?: return false
+        if (!isCategoryCompatible(transaction.type, categoryId)) return false
         transactionDao.assignCategory(transactionId, categoryId)
+        return true
+    }
+
+    private suspend fun isCategoryCompatible(type: TransactionType, categoryId: Long?): Boolean {
+        val kind = categoryId?.let { categoryDao.getById(it)?.kind }
+        return categoryId == null || kind != null && TransactionCategoryRules.isCompatible(type, kind)
+    }
 
     suspend fun changeTransactionType(transactionId: Long, type: TransactionType) =
         transactionDao.changeTypeAndClearCategory(transactionId, type)
@@ -140,7 +156,8 @@ class TransactionRepository(
         description: String,
         date: Long,
         categoryId: Long?
-    ) {
+    ): Boolean {
+        if (!isCategoryCompatible(type, categoryId)) return false
         transactionDao.insert(
             Transaction(
                 amountToman = amountToman,
@@ -154,6 +171,7 @@ class TransactionRepository(
                 isIndirectSettlement = true
             )
         )
+        return true
     }
 
     /**
@@ -277,6 +295,7 @@ class TransactionRepository(
     // --- Unidentified SMS (explainable alternative to auto-guessing) ---
 
     val unidentifiedSms: Flow<List<UnidentifiedSms>> = unidentifiedSmsDao.getActive()
+    suspend fun activeUnidentifiedCount(): Int = unidentifiedSmsDao.countActive()
     suspend fun dismissUnidentifiedSms(id: Long) = unidentifiedSmsDao.dismiss(id)
     suspend fun dismissAllUnidentifiedSms() = unidentifiedSmsDao.dismissAll()
 

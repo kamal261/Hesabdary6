@@ -152,6 +152,7 @@ fun AddTransactionScreen(
                             usageCounts = categoryUsageCounts,
                             selectedId = selectedCategory?.id,
                             initialKind = if (type == TransactionType.INCOME) CategoryKind.INCOME else CategoryKind.EXPENSE,
+                            allowSideToggle = false,
                             onSelect = { id -> selectedCategory = categories.firstOrNull { it.id == id } }
                         )
                     }

@@ -27,4 +27,7 @@ interface UnidentifiedSmsDao {
 
     @Query("UPDATE unidentified_sms SET dismissed = 1 WHERE dismissed = 0")
     suspend fun dismissAll()
+
+    @Query("SELECT COUNT(*) FROM unidentified_sms WHERE dismissed = 0")
+    suspend fun countActive(): Int
 }

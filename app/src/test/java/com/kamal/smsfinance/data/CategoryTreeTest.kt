@@ -17,6 +17,13 @@ class CategoryTreeTest {
     }
 
     @Test
+    fun precomputed_paths_match_single_path_lookup() {
+        val paths = CategoryTree.pathsOf(categories)
+        assertEquals("هزینه / خرید خانه / سوپرمارکت", paths[3])
+        assertEquals("درآمد", paths[4])
+    }
+
+    @Test
     fun missing_category_is_explicitly_uncategorized() {
         assertEquals("بدون دسته", CategoryTree.pathOf(999, categories))
         assertEquals("بدون دسته", CategoryTree.pathOf(null, categories))

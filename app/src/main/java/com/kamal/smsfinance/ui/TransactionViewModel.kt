@@ -25,6 +25,11 @@ import java.io.File
 import java.util.Calendar
 
 data class UiMessage(val text: String, val isError: Boolean = false)
+data class OnboardingScanSummary(
+    val scanned: Int,
+    val added: Int,
+    val unidentified: Int
+)
 
 class TransactionViewModel(application: Application) : AndroidViewModel(application) {
 
@@ -212,7 +217,8 @@ class TransactionViewModel(application: Application) : AndroidViewModel(applicat
         sinceMillis: Long? = null,
         incremental: Boolean = true,
         markInitialDone: Boolean = false,
-        commitCursor: Boolean = true
+        commitCursor: Boolean = true,
+        showOnboardingSummary: Boolean = false
     ) {
         viewModelScope.launch {
             _isLoading.value = true
@@ -223,16 +229,36 @@ class TransactionViewModel(application: Application) : AndroidViewModel(applicat
                     commitCursor = commitCursor
                 )
                 if (markInitialDone) settings.setInitialScanDone(true)
+                if (showOnboardingSummary) {
+                    _onboardingScanSummary.value = OnboardingScanSummary(
+                        scanned = result.scanned,
+                        added = result.added,
+                        unidentified = repository.activeUnidentifiedCount()
+                    )
+                }
                 FinanceWidgetProvider.requestUpdate(getApplication())
                 _message.value = UiMessage(
                     "${result.added} تراکنش جدید از ${result.scanned} پیامک بررسی‌شده ذخیره شد"
                 )
             } catch (e: Exception) {
+                if (showOnboardingSummary) _showScanRangeDialog.value = false
                 _message.value = UiMessage("خطا در اسکن پیامک‌ها: ${e.message}", isError = true)
             } finally {
                 _isLoading.value = false
+                if (showOnboardingSummary) _onboardingScanRunning.value = false
             }
         }
+    }
+
+    private val _onboardingScanRunning = MutableStateFlow(false)
+    val onboardingScanRunning: StateFlow<Boolean> = _onboardingScanRunning.asStateFlow()
+    private val _onboardingScanSummary = MutableStateFlow<OnboardingScanSummary?>(null)
+    val onboardingScanSummary: StateFlow<OnboardingScanSummary?> = _onboardingScanSummary.asStateFlow()
+
+    fun clearOnboardingScanSummary() {
+        _onboardingScanSummary.value = null
+        _onboardingScanRunning.value = false
+        _showScanRangeDialog.value = false
     }
 
     /** Incremental scan used when the app becomes visible. Existing cursor and dedup protect against duplicates. */
@@ -272,10 +298,16 @@ class TransactionViewModel(application: Application) : AndroidViewModel(applicat
      * [days]=null means "کل تاریخچه" (no date filter). */
     fun completeOnboardingScan(days: Int?) {
         _showScanRangeDialog.value = false
+        _onboardingScanRunning.value = true
         val sinceMillis = days?.let { System.currentTimeMillis() - it * 24L * 60 * 60 * 1000 }
         // This is the only historical scan launched from first-run. Future taps on the
         // dashboard use scanInbox() with the stored cursor; older ranges remain a Settings action.
-        scanInbox(sinceMillis, incremental = false, markInitialDone = true)
+        scanInbox(
+            sinceMillis = sinceMillis,
+            incremental = false,
+            markInitialDone = true,
+            showOnboardingSummary = true
+        )
     }
 
     val onboardingGuideDone: StateFlow<Boolean> = settings.onboardingGuideDone
@@ -302,7 +334,7 @@ class TransactionViewModel(application: Application) : AndroidViewModel(applicat
         counterpartyId: Long?
     ) {
         viewModelScope.launch {
-            repository.addManual(
+            val saved = repository.addManual(
                 Transaction(
                     amountToman = amountToman,
                     type = type,
@@ -314,7 +346,11 @@ class TransactionViewModel(application: Application) : AndroidViewModel(applicat
                     counterpartyId = counterpartyId
                 )
             )
-            _message.value = UiMessage("تراکنش با موفقیت ثبت شد")
+            _message.value = if (saved) {
+                UiMessage("تراکنش با موفقیت ثبت شد")
+            } else {
+                UiMessage("تراکنش ثبت نشد؛ دسته انتخاب‌شده با نوع هزینه یا درآمد سازگار نیست", isError = true)
+            }
         }
     }
 
@@ -327,8 +363,12 @@ class TransactionViewModel(application: Application) : AndroidViewModel(applicat
         categoryId: Long?
     ) {
         viewModelScope.launch {
-            repository.addIndirectSettlement(amountToman, type, counterpartyId, description, date, categoryId)
-            _message.value = UiMessage("تسویه غیرمستقیم ثبت شد")
+            val saved = repository.addIndirectSettlement(amountToman, type, counterpartyId, description, date, categoryId)
+            _message.value = if (saved) {
+                UiMessage("تسویه غیرمستقیم ثبت شد")
+            } else {
+                UiMessage("تسویه ثبت نشد؛ دسته انتخاب‌شده با نوع هزینه یا درآمد سازگار نیست", isError = true)
+            }
         }
     }
 
@@ -337,7 +377,11 @@ class TransactionViewModel(application: Application) : AndroidViewModel(applicat
     }
 
     fun assignCategory(transactionId: Long, categoryId: Long?) {
-        viewModelScope.launch { repository.assignCategory(transactionId, categoryId) }
+        viewModelScope.launch {
+            if (!repository.assignCategory(transactionId, categoryId)) {
+                _message.value = UiMessage("دسته انتخاب‌شده با نوع تراکنش سازگار نیست", isError = true)
+            }
+        }
     }
 
     fun changeTransactionType(transactionId: Long, type: TransactionType) {
@@ -595,8 +639,7 @@ class TransactionViewModel(application: Application) : AndroidViewModel(applicat
         _pendingRestoreUri.value = null
         viewModelScope.launch {
             val db = (getApplication<Application>() as SmsFinanceApp).database
-            BackupManager.wipeForRestore(db)
-            performRestore(uri, db)
+            performRestoreReplacingExisting(uri, db)
         }
     }
 
@@ -620,6 +663,18 @@ class TransactionViewModel(application: Application) : AndroidViewModel(applicat
             _message.value = UiMessage("$count تراکنش بازیابی شد")
         } catch (e: Exception) {
             _message.value = UiMessage("خطا در بازیابی: ${e.message}", isError = true)
+        } finally {
+            _isLoading.value = false
+        }
+    }
+
+    private suspend fun performRestoreReplacingExisting(uri: Uri, db: AppDatabase) {
+        _isLoading.value = true
+        try {
+            val count = BackupManager.restoreReplacingExisting(getApplication(), uri, db)
+            _message.value = UiMessage("$count تراکنش بازیابی شد")
+        } catch (e: Exception) {
+            _message.value = UiMessage("بازیابی انجام نشد؛ اطلاعات قبلی حفظ شد: ${e.message}", isError = true)
         } finally {
             _isLoading.value = false
         }
@@ -760,10 +815,12 @@ class TransactionViewModel(application: Application) : AndroidViewModel(applicat
     fun byBank(list: List<Transaction> = allTransactions.value): Map<String, Long> =
         reportable(list).groupBy { it.bankName }.mapValues { (_, txns) -> txns.sumOf { it.amountToman } }
 
-    fun byCategory(list: List<Transaction> = allTransactions.value, categories: List<Category> = allCategories.value): Map<String, Long> =
-        reportable(list)
-            .groupBy { CategoryTree.pathOf(it.categoryId, categories) }
+    fun byCategory(list: List<Transaction> = allTransactions.value, categories: List<Category> = allCategories.value): Map<String, Long> {
+        val categoryPaths = CategoryTree.pathsOf(categories)
+        return reportable(list)
+            .groupBy { categoryPaths[it.categoryId] ?: "بدون دسته" }
             .mapValues { (_, txns) -> txns.sumOf { it.amountToman } }
+    }
 
     /**
      * The UI/export path now consumes the unified PatternAnalyzer. The legacy RecurringDetector

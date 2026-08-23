@@ -16,6 +16,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.kamal.smsfinance.data.Category
 import com.kamal.smsfinance.data.CategoryTree
@@ -70,6 +71,8 @@ fun TransactionListScreen(
     var detailFor by remember { mutableStateOf<Transaction?>(null) }
     var ruleSuggestionFor by remember { mutableStateOf<Pair<Transaction, Long>?>(null) }
     var pendingRuleSuggestionFor by remember { mutableStateOf<Pair<Transaction, Long>?>(null) }
+
+    val categoryPaths = remember(categories) { CategoryTree.pathsOf(categories) }
 
     val filtered = remember(transactions, query, onlyUncategorized, onlyWithNotes) {
         transactions
@@ -202,14 +205,19 @@ fun TransactionListScreen(
                 }
 
                 if (filtered.isEmpty()) {
-                    item { EmptyState() }
+                    item {
+                        EmptyState(
+                            showActions = transactions.isEmpty(),
+                            onScanInbox = onScanInbox,
+                            onAddManual = onAddManual
+                        )
+                    }
                 } else {
                     items(filtered, key = { it.id }) { txn ->
                         TransactionCard(
                             txn = txn,
-                            categoryName = CategoryTree.pathOf(txn.categoryId, categories),
+                            categoryName = categoryPaths[txn.categoryId] ?: "بدون دسته",
                             isRecurring = txn.id in recurringIds,
-                            onDelete = { onDelete(txn) },
                             onClick = { detailFor = txn }
                         )
                     }
@@ -222,13 +230,17 @@ fun TransactionListScreen(
     detailFor?.let { txn ->
         TransactionDetailDialog(
             transaction = txn,
-            currentCategoryName = CategoryTree.pathOf(txn.categoryId, categories),
+            currentCategoryName = categoryPaths[txn.categoryId] ?: "بدون دسته",
             categories = categories,
             categoryUsageCounts = categoryUsageCounts,
             onCreateCategory = onCreateCategory,
             onChangeType = { type ->
                 onChangeType(txn, type)
                 detailFor = txn.copy(type = type, categoryId = null)
+            },
+            onDelete = {
+                onDelete(txn)
+                detailFor = null
             },
             onDismiss = {
                 detailFor = null
@@ -382,6 +394,7 @@ private fun TransactionDetailDialog(
     categoryUsageCounts: Map<Long, Int>,
     onCreateCategory: (name: String, kind: com.kamal.smsfinance.data.CategoryKind, parentId: Long?) -> Unit,
     onChangeType: (TransactionType) -> Unit,
+    onDelete: () -> Unit,
     onDismiss: () -> Unit,
     onSelectCategory: (Long?) -> Unit,
     onSaveNotes: (String?) -> Unit,
@@ -395,6 +408,52 @@ private fun TransactionDetailDialog(
     val fullText = transaction.rawSms?.takeIf { it.isNotBlank() } ?: transaction.description
     val clipboard = LocalClipboardManager.current
     var notesText by remember(transaction.id) { mutableStateOf(transaction.notes ?: "") }
+    var showTypeChangeDialog by remember(transaction.id) { mutableStateOf(false) }
+    var showDeleteConfirmation by remember(transaction.id) { mutableStateOf(false) }
+
+    if (showDeleteConfirmation) {
+        AlertDialog(
+            onDismissRequest = { showDeleteConfirmation = false },
+            title = { Text("حذف تراکنش؟") },
+            text = { Text("این تراکنش از دفتر مالی حذف می‌شود. این کار را فقط اگر مطمئن هستید انجام دهید.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    showDeleteConfirmation = false
+                    onDelete()
+                }) {
+                    Text("حذف", color = MaterialTheme.colorScheme.error)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDeleteConfirmation = false }) { Text("انصراف") }
+            }
+        )
+    }
+
+    if (showTypeChangeDialog) {
+        AlertDialog(
+            onDismissRequest = { showTypeChangeDialog = false },
+            title = { Text("تغییر نوع تراکنش") },
+            text = {
+                Text("در حالت عادی، برداشت هزینه و واریز درآمد است. فقط اگر مطمئن هستید نوع تراکنش اشتباه تشخیص داده شده، آن را تغییر دهید. دسته فعلی پاک می‌شود تا دوباره دسته مناسب را انتخاب کنید.")
+            },
+            confirmButton = {
+                Column {
+                    TextButton(onClick = {
+                        showTypeChangeDialog = false
+                        onChangeType(TransactionType.INCOME)
+                    }) { Text("واریز / درآمد") }
+                    TextButton(onClick = {
+                        showTypeChangeDialog = false
+                        onChangeType(TransactionType.EXPENSE)
+                    }) { Text("برداشت / هزینه") }
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showTypeChangeDialog = false }) { Text("انصراف") }
+            }
+        )
+    }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -460,7 +519,19 @@ private fun TransactionDetailDialog(
                 }
 
                 Spacer(Modifier.height(16.dp))
-                Text("دسته‌بندی: ${currentCategoryName ?: "بدون دسته"}", style = MaterialTheme.typography.titleMedium)
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("دسته‌بندی: ${currentCategoryName ?: "بدون دسته"}", style = MaterialTheme.typography.titleMedium)
+                        Text(
+                            if (isIncome) "نوع فعلی: واریز / درآمد" else "نوع فعلی: برداشت / هزینه",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    TextButton(onClick = { showTypeChangeDialog = true }) {
+                        Text("تغییر نوع")
+                    }
+                }
                 Spacer(Modifier.height(8.dp))
 
                 CategoryPicker(
@@ -469,14 +540,7 @@ private fun TransactionDetailDialog(
                     selectedId = transaction.categoryId,
                     onSelect = onSelectCategory,
                     onCreateCategory = onCreateCategory,
-                    onSideChange = { kind ->
-                        onChangeType(
-                            if (kind == com.kamal.smsfinance.data.CategoryKind.INCOME || kind == com.kamal.smsfinance.data.CategoryKind.DEBT_COLLECTION)
-                                TransactionType.INCOME
-                            else
-                                TransactionType.EXPENSE
-                        )
-                    },
+                    allowSideToggle = false,
                     initialKind = if (transaction.type == TransactionType.INCOME) com.kamal.smsfinance.data.CategoryKind.INCOME else com.kamal.smsfinance.data.CategoryKind.EXPENSE,
                     noteText = notesText,
                     onNoteChange = { notesText = it },
@@ -485,16 +549,26 @@ private fun TransactionDetailDialog(
             }
         },
         confirmButton = {
-            TextButton(onClick = onDismiss) { Text("بستن") }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(onClick = { showDeleteConfirmation = true }) {
+                    Text("حذف", color = MaterialTheme.colorScheme.error)
+                }
+                Button(onClick = onDismiss) { Text("بستن") }
+            }
         }
     )
 }
 
 @Composable
-private fun EmptyState() {
+private fun EmptyState(
+    showActions: Boolean,
+    onScanInbox: () -> Unit,
+    onAddManual: () -> Unit
+) {
     Column(
         modifier = Modifier.fillMaxWidth().padding(32.dp),
-        horizontalAlignment = Alignment.CenterHorizontally
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         Icon(
             Icons.Filled.ReceiptLong,
@@ -502,12 +576,34 @@ private fun EmptyState() {
             modifier = Modifier.size(56.dp),
             tint = MaterialTheme.colorScheme.outline
         )
-        Spacer(Modifier.height(12.dp))
         Text(
-            "هنوز تراکنشی ثبت نشده است.\nروی «اسکن پیامک‌ها» بزنید یا یک تراکنش دستی اضافه کنید.",
+            if (showActions) "هنوز تراکنشی ثبت نشده است." else "موردی با این جستجو پیدا نشد.",
             textAlign = androidx.compose.ui.text.style.TextAlign.Center,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            style = MaterialTheme.typography.bodyLarge
         )
+        if (showActions) {
+            Button(onClick = onScanInbox, modifier = Modifier.fillMaxWidth()) {
+                Text("اسکن پیامک‌ها")
+            }
+            OutlinedButton(onClick = onAddManual, modifier = Modifier.fillMaxWidth()) {
+                Text("ثبت دستی تراکنش")
+            }
+        }
+    }
+}
+
+@Composable
+private fun StatusMark(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    label: String
+) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(2.dp)
+    ) {
+        Icon(icon, contentDescription = label, modifier = Modifier.size(15.dp), tint = MaterialTheme.colorScheme.outline)
+        Text(label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.outline)
     }
 }
 
@@ -516,7 +612,6 @@ private fun TransactionCard(
     txn: Transaction,
     categoryName: String?,
     isRecurring: Boolean,
-    onDelete: () -> Unit,
     onClick: () -> Unit
 ) {
     val isIncome = txn.type == TransactionType.INCOME
@@ -545,20 +640,14 @@ private fun TransactionCard(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 2
                 )
-                Row(verticalAlignment = Alignment.CenterVertically) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
                     Text(dateStr, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.outline)
-                    if (isRecurring) {
-                        Spacer(Modifier.width(6.dp))
-                        AssistChip(onClick = {}, label = { Text("تکراری", style = MaterialTheme.typography.labelLarge) })
-                    }
-                    if (txn.transferGroupId != null) {
-                        Spacer(Modifier.width(6.dp))
-                        AssistChip(onClick = {}, label = { Text("انتقال داخلی", style = MaterialTheme.typography.labelLarge) })
-                    }
-                    if (txn.linkedCheckId != null) {
-                        Spacer(Modifier.width(6.dp))
-                        AssistChip(onClick = {}, label = { Text("مرتبط با چک", style = MaterialTheme.typography.labelLarge) })
-                    }
+                    if (isRecurring) StatusMark(icon = Icons.Filled.Refresh, label = "تکراری")
+                    if (txn.transferGroupId != null) StatusMark(icon = Icons.Filled.SwapHoriz, label = "انتقال داخلی")
+                    if (txn.linkedCheckId != null) StatusMark(icon = Icons.Filled.ReceiptLong, label = "مرتبط با چک")
                 }
                 Spacer(Modifier.height(4.dp))
                 Row(
@@ -574,9 +663,10 @@ private fun TransactionCard(
                         )
                         Text(
                             categoryName ?: "بدون دسته",
-                            style = MaterialTheme.typography.bodySmall,
+                            style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.primary,
-                            softWrap = true
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis
                         )
                     }
                     if (!txn.notes.isNullOrBlank()) {
@@ -590,14 +680,16 @@ private fun TransactionCard(
             Spacer(Modifier.width(8.dp))
             Column(horizontalAlignment = Alignment.End) {
                 Text(
+                    if (isIncome) "واریز" else "برداشت",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = amountColor
+                )
+                Text(
                     text = "${"%,d".format(txn.amountToman)} ت",
                     color = amountColor,
                     fontWeight = FontWeight.Bold,
-                    style = MaterialTheme.typography.titleMedium
+                    style = MaterialTheme.typography.titleLarge
                 )
-                IconButton(onClick = onDelete) {
-                    Icon(Icons.Filled.DeleteOutline, contentDescription = "حذف", tint = MaterialTheme.colorScheme.outline)
-                }
             }
         }
     }

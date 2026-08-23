@@ -36,6 +36,7 @@ fun TransactionDrilldownScreen(
     onBack: () -> Unit
 ) {
     var selectedTransaction by remember { mutableStateOf<Transaction?>(null) }
+    val categoryPaths = remember(categories) { CategoryTree.pathsOf(categories) }
 
     Scaffold(
         topBar = {
@@ -100,7 +101,7 @@ fun TransactionDrilldownScreen(
                                     color = MaterialTheme.colorScheme.outline
                                 )
                                 Text(
-                                    "دسته: ${CategoryTree.pathOf(txn.categoryId, categories)}",
+                                    "دسته: ${categoryPaths[txn.categoryId] ?: "بدون دسته"}",
                                     style = MaterialTheme.typography.labelMedium,
                                     color = MaterialTheme.colorScheme.primary
                                 )

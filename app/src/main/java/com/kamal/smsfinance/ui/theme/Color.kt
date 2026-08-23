@@ -3,14 +3,14 @@ package com.kamal.smsfinance.ui.theme
 
 import androidx.compose.ui.graphics.Color
 
-// Income: a richer, slightly warm emerald -- feels positive without being neon.
-val GreenIncome = Color(0xFF1B8A5A)
+// Income: a richer, slightly warm emerald -- readable on the light surface without being neon.
+val GreenIncome = Color(0xFF176B48)
 val GreenIncomeLight = Color(0xFF4CAF7D)
 val GreenIncomeContainer = Color(0xFFDCF3E6)
 
-// Expense: soft coral/amber instead of pure alarm-red -- still reads as
-// "money out" at a glance, but doesn't feel like an error state.
-val RedExpense = Color(0xFFE0673D)
+// Expense: deep terracotta instead of pure alarm-red -- readable on white while
+// still feeling like "money out", not an error state.
+val RedExpense = Color(0xFFB84F2F)
 val RedExpenseLight = Color(0xFFF08A63)
 val RedExpenseContainer = Color(0xFFFBE6DD)
 

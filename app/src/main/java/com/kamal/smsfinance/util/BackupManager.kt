@@ -57,8 +57,9 @@ object BackupManager {
         db.transactionDao().getAllOnce().isNotEmpty()
     }
 
-    /** Wipes everything a restore would repopulate, EXCEPT categories (deduped by name instead, so user-added custom categories aren't lost). */
-    suspend fun wipeForRestore(db: AppDatabase) = withContext(Dispatchers.IO) {
+    /** Wipes everything a restore would repopulate. Must only be called inside the atomic
+     * restore transaction, so a later parse/insert failure rolls the deletion back too. */
+    private suspend fun wipeForRestoreInsideTransaction(db: AppDatabase) {
         db.transactionDao().deleteAll()
         db.counterpartyReminderDao().getAllOnce().forEach { db.counterpartyReminderDao().delete(it) }
         db.counterpartyDao().getAllOnce().forEach { db.counterpartyDao().delete(it) }
@@ -169,21 +170,40 @@ object BackupManager {
         file
     }
 
-    /**
-     * Restores from a backup file. Call hasExistingData()+wipeForRestore()
-     * from the caller first (with user confirmation) for a clean restore
-     * into a non-empty database -- see the class doc-comment. The whole
-     * restore runs inside a single database transaction: if anything throws
-     * partway through, nothing from this call is left committed.
-     */
+    /** Restores into an empty database. Parsing happens before the DB transaction. */
     suspend fun restoreBackup(context: Context, uri: Uri, db: AppDatabase): Int =
         withContext(Dispatchers.IO) {
-            val text = context.contentResolver.openInputStream(uri)?.bufferedReader()?.readText()
-                ?: return@withContext 0
-            val root = JSONObject(text)
+            val root = readBackupRoot(context, uri) ?: return@withContext 0
+            restoreRoot(root, db)
+        }
 
+    /**
+     * Atomically replaces all restorable data. The file is parsed before any deletion, then the
+     * wipe and every insert/remap run in one SQLite transaction. Any malformed field or later
+     * insert failure rolls back both the restore and the wipe, preserving the previous database.
+     */
+    suspend fun restoreReplacingExisting(context: Context, uri: Uri, db: AppDatabase): Int =
+        withContext(Dispatchers.IO) {
+            val root = readBackupRoot(context, uri) ?: return@withContext 0
             db.withTransaction {
-                // oldId -> newId for every table another table can point to. Built while
+                wipeForRestoreInsideTransaction(db)
+                restoreRootInsideTransaction(root, db)
+            }
+        }
+
+    private suspend fun readBackupRoot(context: Context, uri: Uri): JSONObject? {
+        val text = context.contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() }
+            ?: return null
+        return JSONObject(text)
+    }
+
+    private suspend fun restoreRoot(root: JSONObject, db: AppDatabase): Int =
+        db.withTransaction {
+            restoreRootInsideTransaction(root, db)
+        }
+
+    private suspend fun restoreRootInsideTransaction(root: JSONObject, db: AppDatabase): Int {
+        // oldId -> newId for every table another table can point to. Built while
                 // restoring each table below; a lookup with a null result (no entry, or the
                 // JSON field itself was null) resolves to null, which is a valid "no
                 // category/counterparty/settlement" state rather than an error.
@@ -382,9 +402,8 @@ object BackupManager {
                     }
                 }
 
-                restored
-            }
-        }
+        return restored
+    }
 
     private fun JSONObject.optStringOrNull(key: String): String? =
         if (has(key) && !isNull(key)) getString(key) else null

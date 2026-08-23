@@ -34,7 +34,7 @@ import com.kamal.smsfinance.util.ThemeMode
 import com.kamal.smsfinance.widget.FinanceWidgetProvider
 
 private enum class Tab(val label: String) {
-    LIST("تراکنش‌ها"), COUNTERPARTIES("طرف حساب‌ها"), CHECKS("چک‌ها"), STATS("آمار"), SETTINGS("تنظیمات")
+    LIST("تراکنش‌ها"), COUNTERPARTIES("طلب و بدهی"), CHECKS("چک‌ها"), STATS("دخل و خرج"), SETTINGS("تنظیمات")
 }
 
 private sealed class Overlay {
@@ -68,6 +68,8 @@ class MainActivity : ComponentActivity() {
                 Surface(modifier = Modifier, color = MaterialTheme.colorScheme.background) {
                     SmsPermissionGate(onGranted = { viewModel.onSmsPermissionGranted() }) { smsPermissionGranted, requestSmsPermission ->
                         val showOnboarding by viewModel.showScanRangeDialog.collectAsState()
+                        val onboardingScanSummary by viewModel.onboardingScanSummary.collectAsState()
+                        val onboardingScanRunning by viewModel.onboardingScanRunning.collectAsState()
                         if (showOnboarding) {
                             com.kamal.smsfinance.ui.components.OnboardingFlow(
                                 onSetSmallAmount = { enabled, threshold ->
@@ -75,7 +77,10 @@ class MainActivity : ComponentActivity() {
                                     viewModel.setSmallAmountThreshold(threshold)
                                 },
                                 onCreateCategories = { chosen -> viewModel.createSuggestedCategories(chosen) },
-                                onFinish = { days -> viewModel.completeOnboardingScan(days) }
+                                onFinish = { days -> viewModel.completeOnboardingScan(days) },
+                                scanSummary = onboardingScanSummary,
+                                scanRunning = onboardingScanRunning,
+                                onScanSummaryDone = { viewModel.clearOnboardingScanSummary() }
                             )
                         } else {
                             AppRoot(
@@ -100,6 +105,7 @@ private fun AppRoot(
 ) {
     val transactions by viewModel.allTransactions.collectAsState()
     val categories by viewModel.allCategories.collectAsState()
+    val categoryPaths = remember(categories) { CategoryTree.pathsOf(categories) }
     val counterparties by viewModel.allCounterparties.collectAsState()
     val checks by viewModel.allChecks.collectAsState()
     val checksDueSoon by viewModel.checksDueSoon.collectAsState()
@@ -279,7 +285,7 @@ private fun AppRoot(
         is Overlay.CategoryTransactions -> {
             TransactionDrilldownScreen(
                 title = "تراکنش‌های دسته ${current.path}",
-                transactions = transactions.filter { CategoryTree.pathOf(it.categoryId, categories) == current.path },
+                transactions = transactions.filter { (categoryPaths[it.categoryId] ?: "بدون دسته") == current.path },
                 categories = categories,
                 onBack = { overlay = null }
             )
