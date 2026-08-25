@@ -43,11 +43,7 @@ fun TransactionListScreen(
     dashboard: DashboardData,
     smartSuggestions: List<SmartSuggestion> = emptyList(),
     lastScanTimestamp: Long? = null,
-    backupReminderVisible: Boolean = false,
-    lastBackupTimestamp: Long? = null,
     smsPermissionGranted: Boolean = true,
-    onCreateBackup: () -> Unit = {},
-    onSnoozeBackupReminder: () -> Unit = {},
     onRequestSmsPermission: () -> Unit = {},
     onAcceptSuggestion: (SmartSuggestion) -> Unit = {},
     onRejectSuggestion: (SmartSuggestion) -> Unit = {},
@@ -63,6 +59,8 @@ fun TransactionListScreen(
     onOpenChecks: () -> Unit,
     onOpenCounterparties: () -> Unit,
     onSaveNotes: (Transaction, String?) -> Unit,
+    onLinkTransfer: (Transaction, Transaction) -> Unit,
+    onUnlinkTransfer: (Transaction) -> Unit,
     onViewSmsContext: (sender: String, timestamp: Long) -> Unit
 ) {
     var query by remember { mutableStateOf("") }
@@ -108,16 +106,6 @@ fun TransactionListScreen(
                         onOpenChecks = onOpenChecks,
                         onOpenCounterparties = onOpenCounterparties
                     )
-                }
-
-                if (backupReminderVisible) {
-                    item {
-                        com.kamal.smsfinance.ui.components.BackupReminderBanner(
-                            lastBackupTimestamp = lastBackupTimestamp,
-                            onCreateBackup = onCreateBackup,
-                            onSnooze = onSnoozeBackupReminder
-                        )
-                    }
                 }
 
                 if (!smsPermissionGranted) {
@@ -253,7 +241,10 @@ fun TransactionListScreen(
                 onAssignCategory(txn, categoryId)
                 if (categoryId != null) pendingRuleSuggestionFor = txn to categoryId
             },
-                            onSaveNotes = { notes -> onSaveNotes(txn, notes) },
+            onSaveNotes = { notes -> onSaveNotes(txn, notes) },
+            allTransactions = transactions,
+            onLinkTransfer = { other -> onLinkTransfer(txn, other) },
+            onUnlinkTransfer = { onUnlinkTransfer(txn) },
 
                             onViewSmsContext = {
 
@@ -398,6 +389,9 @@ private fun TransactionDetailDialog(
     onDismiss: () -> Unit,
     onSelectCategory: (Long?) -> Unit,
     onSaveNotes: (String?) -> Unit,
+    allTransactions: List<Transaction>,
+    onLinkTransfer: (Transaction) -> Unit,
+    onUnlinkTransfer: () -> Unit,
     onViewSmsContext: () -> Unit
 ) {
     val isIncome = transaction.type == TransactionType.INCOME
@@ -410,6 +404,21 @@ private fun TransactionDetailDialog(
     var notesText by remember(transaction.id) { mutableStateOf(transaction.notes ?: "") }
     var showTypeChangeDialog by remember(transaction.id) { mutableStateOf(false) }
     var showDeleteConfirmation by remember(transaction.id) { mutableStateOf(false) }
+    var showTransferPicker by remember(transaction.id) { mutableStateOf(false) }
+
+    if (showTransferPicker) {
+        TransferLinkPickerDialog(
+            current = transaction,
+            candidates = allTransactions.filter {
+                it.id != transaction.id && it.transferGroupId == null && it.type != transaction.type
+            },
+            onPick = {
+                onLinkTransfer(it)
+                showTransferPicker = false
+            },
+            onDismiss = { showTransferPicker = false }
+        )
+    }
 
     if (showDeleteConfirmation) {
         AlertDialog(
@@ -534,6 +543,35 @@ private fun TransactionDetailDialog(
                 }
                 Spacer(Modifier.height(8.dp))
 
+                if (transaction.transferGroupId != null) {
+                    Surface(
+                        color = MaterialTheme.colorScheme.secondaryContainer,
+                        shape = MaterialTheme.shapes.small,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(12.dp).fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(Icons.Filled.SwapHoriz, contentDescription = null)
+                            Spacer(Modifier.width(8.dp))
+                            Text(
+                                "این تراکنش جابجایی بین حساب‌های خودتان علامت خورده و در درآمد/هزینه شمرده نمی‌شود.",
+                                style = MaterialTheme.typography.bodySmall,
+                                modifier = Modifier.weight(1f)
+                            )
+                            TextButton(onClick = onUnlinkTransfer) { Text("لغو") }
+                        }
+                    }
+                } else {
+                    OutlinedButton(onClick = { showTransferPicker = true }, modifier = Modifier.fillMaxWidth()) {
+                        Icon(Icons.Filled.SwapHoriz, contentDescription = null)
+                        Spacer(Modifier.width(8.dp))
+                        Text("جابجایی بین حساب‌های خودم است")
+                    }
+                }
+                Spacer(Modifier.height(8.dp))
+
                 CategoryPicker(
                     categories = categories,
                     usageCounts = categoryUsageCounts,
@@ -556,6 +594,91 @@ private fun TransactionDetailDialog(
                 Button(onClick = onDismiss) { Text("بستن") }
             }
         }
+    )
+}
+
+@Composable
+private fun TransferLinkPickerDialog(
+    current: Transaction,
+    candidates: List<Transaction>,
+    onPick: (Transaction) -> Unit,
+    onDismiss: () -> Unit
+) {
+    var query by remember { mutableStateOf("") }
+    val filtered = remember(candidates, query) {
+        candidates
+            .filter {
+                query.isBlank() ||
+                    it.description.contains(query, ignoreCase = true) ||
+                    it.bankName.contains(query, ignoreCase = true) ||
+                    it.amountToman.toString().contains(query)
+            }
+            .sortedBy { kotlin.math.abs(it.date - current.date) }
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Text(
+                if (current.type == TransactionType.INCOME)
+                    "کدام برداشت به این واریز مرتبط است؟"
+                else
+                    "کدام واریز به این برداشت مرتبط است؟"
+            )
+        },
+        text = {
+            Column {
+                Text(
+                    "دو طرف یک جابجایی بین حساب‌های خودتان را انتخاب کنید — مبلغ هر دو از " +
+                        "محاسبه‌ی درآمد و هزینه کنار گذاشته می‌شود.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(Modifier.height(8.dp))
+                OutlinedTextField(
+                    value = query,
+                    onValueChange = { query = it },
+                    label = { Text("جست‌وجو (بانک، مبلغ، توضیح)") },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true
+                )
+                Spacer(Modifier.height(8.dp))
+                if (filtered.isEmpty()) {
+                    Text(
+                        "هیچ تراکنش دیگری با نوع مخالف و بدون علامت جابجایی پیدا نشد.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(vertical = 16.dp)
+                    )
+                } else {
+                    LazyColumn(
+                        modifier = Modifier.heightIn(max = 360.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        items(filtered, key = { it.id }) { candidate ->
+                            OutlinedButton(
+                                onClick = { onPick(candidate) },
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Column(modifier = Modifier.fillMaxWidth()) {
+                                    Text(
+                                        "${"%,d".format(candidate.amountToman)} تومان — ${candidate.bankName}",
+                                        style = MaterialTheme.typography.bodyMedium
+                                    )
+                                    Text(
+                                        JalaliDate.formatDateTime(candidate.date),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {},
+        dismissButton = { TextButton(onClick = onDismiss) { Text("انصراف") } }
     )
 }
 

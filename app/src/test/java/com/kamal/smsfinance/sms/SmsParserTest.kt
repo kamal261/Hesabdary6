@@ -222,14 +222,28 @@ class SmsParserTest {
     }
 
     @Test
-    fun `parse - Bare amount pattern "مبلغ 500000 از"`() {
+    fun `parse - Bare amount pattern with no unit word defaults to Rial (divided by 10)`() {
         val sender = "Mellat"
         val body = "مبلغ 500000 از حساب شما کسر گردید. مانده: 1000000"
         val result = SmsParser.parse(sender, body, now)
 
         assertTrue(result is SmsParseResult.Recognized)
         val recognized = result as SmsParseResult.Recognized
-        assertEquals(500000L, recognized.parsed.amountToman)
+        assertEquals(50000L, recognized.parsed.amountToman)
+    }
+
+    @Test
+    fun `parse - Melli unlabeled transfer amount matches real-world screenshot`() {
+        // Regression test for a real Bank Melli SMS: "... انتقال به مبلغ 2,000,000 ..." with no
+        // ریال/تومان word at all. Was previously stored as 2,000,000 Toman (10x too high) because
+        // the no-unit fallback path skipped the Rial->Toman division every other path applies.
+        val sender = "50001"
+        val body = "بانک ملی\nبانک ملی 9183*589463\nانتقال به مبلغ 2,000,000\n۱۸:۲۹ - ۱۴۰۵/۰۵/۳۱"
+        val result = SmsParser.parse(sender, body, now)
+
+        assertTrue(result is SmsParseResult.Recognized)
+        val recognized = result as SmsParseResult.Recognized
+        assertEquals(200000L, recognized.parsed.amountToman)
     }
 
     @Test

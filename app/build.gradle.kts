@@ -12,8 +12,8 @@ android {
         applicationId = "com.kamal.smsfinance"
         minSdk = 26
         targetSdk = 34
-        versionCode = 12
-        versionName = "0.6.5"
+        versionCode = 13
+        versionName = "0.6.6"
 
         vectorDrawables { useSupportLibrary = true }
     }

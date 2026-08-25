@@ -14,8 +14,9 @@ class RuleEngineTest {
         pattern: String,
         categoryId: Long? = null,
         counterpartyId: Long? = null,
+        action: RuleAction = RuleAction.CATEGORIZE,
         id: Long = 0
-    ) = SmartRule(id = id, pattern = pattern, categoryId = categoryId, counterpartyId = counterpartyId)
+    ) = SmartRule(id = id, pattern = pattern, categoryId = categoryId, counterpartyId = counterpartyId, action = action)
 
     // ---------- Basic matching ----------
 
@@ -136,5 +137,42 @@ class RuleEngineTest {
         val result = engine.evaluate("پرداخت علی", rules)
         assertNotNull(result.matchedRule)
         assertTrue(result.categoryId == 1L || result.categoryId == 2L)
+    }
+
+    // ---------- IGNORE action ----------
+
+    @Test
+    fun `IGNORE rule is exposed via matchedRule for the caller to act on`() {
+        // RuleEngine itself never drops anything -- it only ever suggests. The caller
+        // (TransactionRepository) is the one that checks matchedRule.action and decides not to
+        // store the SMS. This test only verifies the engine surfaces the action correctly.
+        val rules = listOf(rule("تبلیغات بانک", action = RuleAction.IGNORE))
+        val result = engine.evaluate("تبلیغات بانک: از وام جدید ما استفاده کنید", rules)
+
+        assertNotNull(result.matchedRule)
+        assertEquals(RuleAction.IGNORE, result.matchedRule?.action)
+    }
+
+    @Test
+    fun `more specific IGNORE rule wins over a shorter CATEGORIZE rule`() {
+        val rules = listOf(
+            rule("خرید", categoryId = 1L, action = RuleAction.CATEGORIZE),
+            rule("خرید اشتراک تبلیغاتی ناخواسته", action = RuleAction.IGNORE)
+        )
+        val result = engine.evaluate("پیامک: خرید اشتراک تبلیغاتی ناخواسته انجام شد", rules)
+
+        assertEquals(RuleAction.IGNORE, result.matchedRule?.action)
+    }
+
+    @Test
+    fun `CATEGORIZE rule unaffected when no IGNORE rule matches`() {
+        val rules = listOf(
+            rule("خرید", categoryId = 1L, action = RuleAction.CATEGORIZE),
+            rule("چیز نامرتبط", action = RuleAction.IGNORE)
+        )
+        val result = engine.evaluate("خرید از فروشگاه", rules)
+
+        assertEquals(RuleAction.CATEGORIZE, result.matchedRule?.action)
+        assertEquals(1L, result.categoryId)
     }
 }

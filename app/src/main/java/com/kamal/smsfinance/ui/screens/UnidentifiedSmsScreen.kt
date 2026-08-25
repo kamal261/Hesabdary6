@@ -19,6 +19,7 @@ fun UnidentifiedSmsScreen(
     onDismiss: (UnidentifiedSms) -> Unit,
     onDismissAll: () -> Unit,
     onExport: () -> Unit,
+    onIgnoreSimilar: (UnidentifiedSms, pattern: String) -> Unit,
     onBack: () -> Unit
 ) {
     Scaffold(
@@ -57,7 +58,11 @@ fun UnidentifiedSmsScreen(
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     items(items, key = { it.id }) { item ->
-                        UnidentifiedSmsCard(item, onDismiss = { onDismiss(item) })
+                        UnidentifiedSmsCard(
+                            item,
+                            onDismiss = { onDismiss(item) },
+                            onIgnoreSimilar = { pattern -> onIgnoreSimilar(item, pattern) }
+                        )
                     }
                     item { Spacer(Modifier.height(24.dp)) }
                 }
@@ -67,10 +72,23 @@ fun UnidentifiedSmsScreen(
 }
 
 @Composable
-private fun UnidentifiedSmsCard(item: UnidentifiedSms, onDismiss: () -> Unit) {
+private fun UnidentifiedSmsCard(item: UnidentifiedSms, onDismiss: () -> Unit, onIgnoreSimilar: (String) -> Unit) {
     val dateStr = remember(item.timestamp) {
         JalaliDate.formatDateTime(item.timestamp)
     }
+    var showIgnorePatternDialog by remember(item.id) { mutableStateOf(false) }
+
+    if (showIgnorePatternDialog) {
+        IgnorePatternDialog(
+            initialPattern = item.sender,
+            onConfirm = { pattern ->
+                onIgnoreSimilar(pattern)
+                showIgnorePatternDialog = false
+            },
+            onDismiss = { showIgnorePatternDialog = false }
+        )
+    }
+
     ElevatedCard(modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp)) {
             Text(item.sender, style = MaterialTheme.typography.titleMedium)
@@ -80,9 +98,53 @@ private fun UnidentifiedSmsCard(item: UnidentifiedSms, onDismiss: () -> Unit) {
                 Text(item.body, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(12.dp))
             }
             Spacer(Modifier.height(8.dp))
-            TextButton(onClick = onDismiss, modifier = Modifier.align(Alignment.End)) {
-                Text("نادیده بگیر")
+            Row(
+                horizontalArrangement = Arrangement.End,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                // Distinct from the one-time dismiss below: this creates a lasting rule so
+                // every future SMS matching the pattern is dropped, not just this one instance.
+                TextButton(onClick = { showIgnorePatternDialog = true }) {
+                    Text("همیشه نادیده بگیر")
+                }
+                TextButton(onClick = onDismiss) {
+                    Text("فقط این یکی")
+                }
             }
         }
     }
+}
+
+@Composable
+private fun IgnorePatternDialog(
+    initialPattern: String,
+    onConfirm: (String) -> Unit,
+    onDismiss: () -> Unit
+) {
+    var pattern by remember { mutableStateOf(initialPattern) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("همیشه نادیده گرفته شود") },
+        text = {
+            Column {
+                Text(
+                    "هر پیامک بعدی که شامل عبارت زیر باشد، دیگر نه ثبت می‌شود و نه در این فهرست ظاهر می‌شود. " +
+                        "می‌توانید عبارت را ویرایش کنید تا دقیق‌تر یا کلی‌تر شود.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(Modifier.height(8.dp))
+                OutlinedTextField(
+                    value = pattern,
+                    onValueChange = { pattern = it },
+                    label = { Text("عبارت تشخیص") },
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { onConfirm(pattern) }, enabled = pattern.isNotBlank()) { Text("همیشه نادیده بگیر") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("انصراف") } }
+    )
 }

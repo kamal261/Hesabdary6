@@ -55,6 +55,11 @@ class Converters {
     fun fromCheckStatus(value: CheckStatus): String = value.name
     @TypeConverter
     fun toCheckStatus(value: String): CheckStatus = CheckStatus.valueOf(value)
+
+    @TypeConverter
+    fun fromRuleAction(value: RuleAction): String = value.name
+    @TypeConverter
+    fun toRuleAction(value: String): RuleAction = RuleAction.valueOf(value)
 }
 
 @Database(
@@ -67,7 +72,7 @@ class Converters {
         SmartRule::class,
         UnidentifiedSms::class
     ],
-    version = 9,
+    version = 11,
     exportSchema = true
 )
 @TypeConverters(Converters::class)
@@ -134,6 +139,27 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        // Supports the new existsExact(sender, body, timestamp) check in tryInsertUnidentified()
+        // (v0.6.6) -- without this index, a large historical scan calls that lookup once per
+        // unrecognized SMS with a full table scan each time, which gets slow exactly in the
+        // case it matters most (many thousands of messages on first install).
+        internal val MIGRATION_9_10 = object : Migration(9, 10) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS index_unidentified_sms_sender_body_timestamp " +
+                        "ON unidentified_sms(sender, body, timestamp)"
+                )
+            }
+        }
+
+        // Adds the IGNORE rule action (v0.6.6) -- existing rules default to CATEGORIZE, their
+        // only action until now, so this is a pure additive change with no data implications.
+        internal val MIGRATION_10_11 = object : Migration(10, 11) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE smart_rules ADD COLUMN action TEXT NOT NULL DEFAULT 'CATEGORIZE'")
+            }
+        }
+
         fun getInstance(context: Context): AppDatabase =
             INSTANCE ?: synchronized(this) {
                 INSTANCE ?: Room.databaseBuilder(
@@ -141,7 +167,7 @@ abstract class AppDatabase : RoomDatabase() {
                     AppDatabase::class.java,
                     "sms_finance.db"
                 )
-                    .addMigrations(MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9)
+                    .addMigrations(MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11)
                     // Never silently wipe a user's financial history. Every supported schema
                     // change must have an explicit migration and an upgrade failure must remain
                     // visible instead of destroying data.

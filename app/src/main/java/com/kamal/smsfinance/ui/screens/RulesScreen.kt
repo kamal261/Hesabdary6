@@ -13,6 +13,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.kamal.smsfinance.data.Category
 import com.kamal.smsfinance.data.Counterparty
+import com.kamal.smsfinance.data.RuleAction
 import com.kamal.smsfinance.data.SmartRule
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -21,7 +22,7 @@ fun RulesScreen(
     rules: List<SmartRule>,
     categories: List<Category>,
     counterparties: List<Counterparty>,
-    onAdd: (pattern: String, categoryId: Long?, counterpartyId: Long?) -> Unit,
+    onAdd: (pattern: String, categoryId: Long?, counterpartyId: Long?, action: RuleAction) -> Unit,
     onDelete: (SmartRule) -> Unit,
     onBack: () -> Unit
 ) {
@@ -44,7 +45,7 @@ fun RulesScreen(
     ) { padding ->
         Column(modifier = Modifier.padding(padding).fillMaxSize()) {
             Text(
-                "هر پیامک بانکی که شامل «عبارت تشخیص» یکی از این قوانین باشد، خودکار به دسته/طرف‌حساب مربوطه اختصاص می‌یابد. این قوانین فقط پیشنهاد دسته‌بندی می‌دهند و هیچ مبلغ یا تراکنشی را حذف/تغییر نمی‌دهند.",
+                "هر پیامک بانکی که شامل «عبارت تشخیص» یکی از این قوانین باشد، خودکار به دسته/طرف‌حساب مربوطه اختصاص می‌یابد — یا اگر نوع قانون «نادیده‌گرفتن» باشد، اصلاً ثبت نمی‌شود. این قوانین هیچ مبلغ یا تراکنش موجودی را حذف/تغییر نمی‌دهند.",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(16.dp)
@@ -68,16 +69,24 @@ fun RulesScreen(
                             ) {
                                 Column {
                                     Text("«${rule.pattern}»", style = MaterialTheme.typography.titleMedium)
-                                    val categoryName = rule.categoryId?.let { categoryById[it]?.name }
-                                    val counterpartyName = rule.counterpartyId?.let { counterpartyById[it]?.name }
-                                    Text(
-                                        listOfNotNull(
-                                            categoryName?.let { "دسته: $it" },
-                                            counterpartyName?.let { "طرف حساب: $it" }
-                                        ).joinToString("  •  ").ifEmpty { "بدون تخصیص" },
-                                        style = MaterialTheme.typography.bodyMedium,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
+                                    if (rule.action == RuleAction.IGNORE) {
+                                        Text(
+                                            "نادیده گرفته می‌شود — اصلاً ثبت نمی‌شود",
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            color = MaterialTheme.colorScheme.error
+                                        )
+                                    } else {
+                                        val categoryName = rule.categoryId?.let { categoryById[it]?.name }
+                                        val counterpartyName = rule.counterpartyId?.let { counterpartyById[it]?.name }
+                                        Text(
+                                            listOfNotNull(
+                                                categoryName?.let { "دسته: $it" },
+                                                counterpartyName?.let { "طرف حساب: $it" }
+                                            ).joinToString("  •  ").ifEmpty { "بدون تخصیص" },
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
                                 }
                                 IconButton(onClick = { onDelete(rule) }) {
                                     Icon(Icons.Filled.DeleteOutline, contentDescription = "حذف قانون")
@@ -96,8 +105,8 @@ fun RulesScreen(
             categories = categories,
             counterparties = counterparties,
             onDismiss = { showAddDialog = false },
-            onConfirm = { pattern, categoryId, counterpartyId ->
-                onAdd(pattern, categoryId, counterpartyId)
+            onConfirm = { pattern, categoryId, counterpartyId, action ->
+                onAdd(pattern, categoryId, counterpartyId, action)
                 showAddDialog = false
             }
         )
@@ -110,9 +119,10 @@ private fun AddRuleDialog(
     categories: List<Category>,
     counterparties: List<Counterparty>,
     onDismiss: () -> Unit,
-    onConfirm: (String, Long?, Long?) -> Unit
+    onConfirm: (String, Long?, Long?, RuleAction) -> Unit
 ) {
     var pattern by remember { mutableStateOf("") }
+    var action by remember { mutableStateOf(RuleAction.CATEGORIZE) }
     var selectedCategory by remember { mutableStateOf<Category?>(null) }
     var selectedCounterparty by remember { mutableStateOf<Counterparty?>(null) }
     var categoryExpanded by remember { mutableStateOf(false) }
@@ -130,36 +140,56 @@ private fun AddRuleDialog(
                     modifier = Modifier.fillMaxWidth()
                 )
 
-                ExposedDropdownMenuBox(expanded = categoryExpanded, onExpandedChange = { categoryExpanded = it }) {
-                    OutlinedTextField(
-                        value = selectedCategory?.name ?: "بدون دسته",
-                        onValueChange = {},
-                        readOnly = true,
-                        label = { Text("دسته‌بندی") },
-                        trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = categoryExpanded) },
-                        modifier = Modifier.fillMaxWidth().menuAnchor()
-                    )
-                    ExposedDropdownMenu(expanded = categoryExpanded, onDismissRequest = { categoryExpanded = false }) {
-                        DropdownMenuItem(text = { Text("بدون دسته") }, onClick = { selectedCategory = null; categoryExpanded = false })
-                        categories.forEach { cat ->
-                            DropdownMenuItem(text = { Text(cat.name) }, onClick = { selectedCategory = cat; categoryExpanded = false })
-                        }
+                Text("این قانون چه کاری انجام دهد؟", style = MaterialTheme.typography.labelLarge)
+                Column {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        RadioButton(selected = action == RuleAction.CATEGORIZE, onClick = { action = RuleAction.CATEGORIZE })
+                        Text("خودکار دسته‌بندی کن")
+                    }
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        RadioButton(selected = action == RuleAction.IGNORE, onClick = { action = RuleAction.IGNORE })
+                        Text("این پیامک را نادیده بگیر (اصلاً ثبت نشود)")
                     }
                 }
 
-                ExposedDropdownMenuBox(expanded = counterpartyExpanded, onExpandedChange = { counterpartyExpanded = it }) {
-                    OutlinedTextField(
-                        value = selectedCounterparty?.name ?: "بدون طرف حساب",
-                        onValueChange = {},
-                        readOnly = true,
-                        label = { Text("طرف حساب") },
-                        trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = counterpartyExpanded) },
-                        modifier = Modifier.fillMaxWidth().menuAnchor()
+                if (action == RuleAction.IGNORE) {
+                    Text(
+                        "پیامک‌هایی که این عبارت را داشته باشند، از این پس نه به‌عنوان تراکنش و نه در فهرست «نیاز به بررسی» ذخیره نمی‌شوند.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
-                    ExposedDropdownMenu(expanded = counterpartyExpanded, onDismissRequest = { counterpartyExpanded = false }) {
-                        DropdownMenuItem(text = { Text("بدون طرف حساب") }, onClick = { selectedCounterparty = null; counterpartyExpanded = false })
-                        counterparties.forEach { cp ->
-                            DropdownMenuItem(text = { Text(cp.name) }, onClick = { selectedCounterparty = cp; counterpartyExpanded = false })
+                } else {
+                    ExposedDropdownMenuBox(expanded = categoryExpanded, onExpandedChange = { categoryExpanded = it }) {
+                        OutlinedTextField(
+                            value = selectedCategory?.name ?: "بدون دسته",
+                            onValueChange = {},
+                            readOnly = true,
+                            label = { Text("دسته‌بندی") },
+                            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = categoryExpanded) },
+                            modifier = Modifier.fillMaxWidth().menuAnchor()
+                        )
+                        ExposedDropdownMenu(expanded = categoryExpanded, onDismissRequest = { categoryExpanded = false }) {
+                            DropdownMenuItem(text = { Text("بدون دسته") }, onClick = { selectedCategory = null; categoryExpanded = false })
+                            categories.forEach { cat ->
+                                DropdownMenuItem(text = { Text(cat.name) }, onClick = { selectedCategory = cat; categoryExpanded = false })
+                            }
+                        }
+                    }
+
+                    ExposedDropdownMenuBox(expanded = counterpartyExpanded, onExpandedChange = { counterpartyExpanded = it }) {
+                        OutlinedTextField(
+                            value = selectedCounterparty?.name ?: "بدون طرف حساب",
+                            onValueChange = {},
+                            readOnly = true,
+                            label = { Text("طرف حساب") },
+                            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = counterpartyExpanded) },
+                            modifier = Modifier.fillMaxWidth().menuAnchor()
+                        )
+                        ExposedDropdownMenu(expanded = counterpartyExpanded, onDismissRequest = { counterpartyExpanded = false }) {
+                            DropdownMenuItem(text = { Text("بدون طرف حساب") }, onClick = { selectedCounterparty = null; counterpartyExpanded = false })
+                            counterparties.forEach { cp ->
+                                DropdownMenuItem(text = { Text(cp.name) }, onClick = { selectedCounterparty = cp; counterpartyExpanded = false })
+                            }
                         }
                     }
                 }
@@ -167,7 +197,14 @@ private fun AddRuleDialog(
         },
         confirmButton = {
             TextButton(
-                onClick = { onConfirm(pattern, selectedCategory?.id, selectedCounterparty?.id) },
+                onClick = {
+                    val (categoryId, counterpartyId) = if (action == RuleAction.IGNORE) {
+                        null to null
+                    } else {
+                        selectedCategory?.id to selectedCounterparty?.id
+                    }
+                    onConfirm(pattern, categoryId, counterpartyId, action)
+                },
                 enabled = pattern.isNotBlank()
             ) { Text("افزودن") }
         },

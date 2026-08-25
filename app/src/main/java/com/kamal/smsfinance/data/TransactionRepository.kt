@@ -119,6 +119,17 @@ class TransactionRepository(
         }
 
     /**
+     * Undoes a transfer-group link. Clears the group from ALL its members together (not just
+     * the one the user tapped) -- FinancialLinkRules requires a group to be either empty or
+     * exactly 2 members, so leaving a lone member linked would keep it wrongly excluded from
+     * profit totals with no partner transaction to justify that exclusion.
+     */
+    suspend fun unlinkTransferGroup(transactionId: Long): Unit = db.withTransaction {
+        val groupId = transactionDao.getById(transactionId)?.transferGroupId ?: return@withTransaction
+        transactionDao.byTransferGroupOnce(groupId).forEach { transactionDao.clearTransferGroup(it.id) }
+    }
+
+    /**
      * Links an existing bank transaction to a pending check without creating a second row.
      * All financial compatibility checks live here rather than only in CheckMatcher/UI.
      */
@@ -222,6 +233,18 @@ class TransactionRepository(
 
     private suspend fun tryInsertUnidentified(sender: String, body: String, timestamp: Long) {
         if (DedupEngine.isDuplicate(sender, body, timestamp)) return
+        // DedupEngine above is purely in-memory and resets on every app-process restart, so it
+        // cannot protect across a restart. This DB-level check is the one that actually survives
+        // an interrupted/re-run scan: without it, re-scanning the same SMS range after the app
+        // was closed or killed mid-scan re-inserted the same "needs review" items as duplicates
+        // every time, because -- unlike tryInsertTransaction below -- nothing here checked the
+        // database itself before inserting.
+        if (unidentifiedSmsDao.existsExact(sender, body, timestamp) > 0) return
+        // A user-defined IGNORE rule applies here too, not just to recognized transactions --
+        // this is exactly how a known, unwanted message structure ("این پیامک رو نادیده بگیر")
+        // is kept out of the review queue permanently, instead of reappearing every scan.
+        val ruleMatch = ruleEngine.evaluate(body, smartRuleDao.getAllRulesOnce())
+        if (ruleMatch.matchedRule?.action == RuleAction.IGNORE) return
         unidentifiedSmsDao.insert(UnidentifiedSms(sender = sender, body = body, timestamp = timestamp))
     }
 
@@ -245,6 +268,7 @@ class TransactionRepository(
         }
 
         val ruleMatch = ruleEngine.evaluate(parsed.rawSms, smartRuleDao.getAllRulesOnce())
+        if (ruleMatch.matchedRule?.action == RuleAction.IGNORE) return false
         var categoryId = ruleMatch.categoryId
 
         // Small-amount auto-categorization: only applies when no rule already
@@ -303,8 +327,8 @@ class TransactionRepository(
 
     val allRules: Flow<List<SmartRule>> = smartRuleDao.getAllRules()
 
-    suspend fun addRule(pattern: String, categoryId: Long?, counterpartyId: Long?) =
-        smartRuleDao.insertRule(SmartRule(pattern = pattern, categoryId = categoryId, counterpartyId = counterpartyId))
+    suspend fun addRule(pattern: String, categoryId: Long?, counterpartyId: Long?, action: RuleAction = RuleAction.CATEGORIZE) =
+        smartRuleDao.insertRule(SmartRule(pattern = pattern, categoryId = categoryId, counterpartyId = counterpartyId, action = action))
 
     suspend fun updateRule(rule: SmartRule) = smartRuleDao.updateRule(rule)
     suspend fun deleteRule(rule: SmartRule) = smartRuleDao.deleteRule(rule)

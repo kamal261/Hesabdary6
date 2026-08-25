@@ -118,6 +118,9 @@ interface TransactionDao {
     @Query("UPDATE transactions SET transferGroupId = :groupId WHERE id IN (:transactionIds)")
     suspend fun assignTransferGroup(transactionIds: List<Long>, groupId: Long)
 
+    @Query("UPDATE transactions SET transferGroupId = NULL WHERE id = :transactionId")
+    suspend fun clearTransferGroup(transactionId: Long)
+
     @Query("UPDATE transactions SET linkedCheckId = :checkId WHERE id = :transactionId")
     suspend fun linkCheck(transactionId: Long, checkId: Long?)
 }

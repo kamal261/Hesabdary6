@@ -391,6 +391,38 @@ class TransactionViewModel(application: Application) : AndroidViewModel(applicat
         }
     }
 
+    fun linkAsTransfer(transactionId: Long, otherTransactionId: Long) {
+        viewModelScope.launch {
+            // Deterministic groupId (no separate counter table needed) -- the smaller of the two
+            // ids, matching how assignTransferGroup already treats groupId as an opaque shared tag.
+            val groupId = minOf(transactionId, otherTransactionId)
+            when (val result = repository.assignTransferGroup(listOf(transactionId, otherTransactionId), groupId)) {
+                is TransferGroupResult.Success -> {
+                    _message.value = UiMessage("جابجایی بین حساب‌ها ثبت شد و در درآمد/هزینه دوباره شمرده نمی‌شود")
+                }
+                is TransferGroupResult.Rejected -> {
+                    val reason = when (result.reason) {
+                        TransferGroupRejection.INVALID_COMPOSITION ->
+                            "یکی باید واریز و دیگری برداشت باشد"
+                        TransferGroupRejection.GROUP_CONFLICT ->
+                            "یکی از این دو تراکنش قبلاً به یک جابجایی دیگر وصل شده است"
+                        TransferGroupRejection.TRANSACTION_NOT_FOUND ->
+                            "یکی از این تراکنش‌ها دیگر در دسترس نیست"
+                        else -> "این دو تراکنش قابل اتصال نیستند"
+                    }
+                    _message.value = UiMessage(reason, isError = true)
+                }
+            }
+        }
+    }
+
+    fun unlinkTransfer(transactionId: Long) {
+        viewModelScope.launch {
+            repository.unlinkTransferGroup(transactionId)
+            _message.value = UiMessage("علامت جابجایی برداشته شد؛ این تراکنش دوباره در درآمد/هزینه شمرده می‌شود")
+        }
+    }
+
     fun assignCounterparty(transactionId: Long, counterpartyId: Long?) {
         viewModelScope.launch { repository.assignCounterparty(transactionId, counterpartyId) }
     }
@@ -401,10 +433,22 @@ class TransactionViewModel(application: Application) : AndroidViewModel(applicat
 
     // --- Smart rules (Explainable Rule Engine) ---
 
-    fun addRule(pattern: String, categoryId: Long?, counterpartyId: Long?) {
+    fun addRule(pattern: String, categoryId: Long?, counterpartyId: Long?, action: RuleAction = RuleAction.CATEGORIZE) {
         viewModelScope.launch {
-            repository.addRule(pattern, categoryId, counterpartyId)
-            _message.value = UiMessage("قانون ذخیره شد؛ پیامک‌های مشابه بعدی خودکار دسته‌بندی می‌شوند")
+            repository.addRule(pattern, categoryId, counterpartyId, action)
+            _message.value = if (action == RuleAction.IGNORE)
+                UiMessage("قانون نادیده‌گرفتن ذخیره شد؛ پیامک‌های مشابه بعدی اصلاً ثبت نمی‌شوند")
+            else
+                UiMessage("قانون ذخیره شد؛ پیامک‌های مشابه بعدی خودکار دسته‌بندی می‌شوند")
+        }
+    }
+
+    /** From the "needs review" list: create an IGNORE rule from this pattern AND dismiss this item. */
+    fun ignoreSimilarAndDismiss(item: UnidentifiedSms, pattern: String) {
+        viewModelScope.launch {
+            repository.addRule(pattern, categoryId = null, counterpartyId = null, action = RuleAction.IGNORE)
+            repository.dismissUnidentifiedSms(item.id)
+            _message.value = UiMessage("قانون نادیده‌گرفتن ذخیره شد؛ پیامک‌های مشابه بعدی اصلاً ثبت نمی‌شوند")
         }
     }
 

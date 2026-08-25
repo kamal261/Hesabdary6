@@ -413,7 +413,8 @@ object SmsParser {
         }
         val bareMatch = BARE_AMOUNT_REGEX.find(body)
         if (bareMatch != null) {
-            return normalizeNumber(bareMatch.groupValues[1])
+            val number = normalizeNumber(bareMatch.groupValues[1]) ?: return null
+            return number / 10 // No unit word at all -> defaults to Rial, same as every other branch here
         }
         val labeledMatch = LABELED_AMOUNT_REGEX.find(body)
         if (labeledMatch != null) {

@@ -288,6 +288,14 @@ private fun CreateCategoryFromPickerDialog(
                     }
                 }
                 Text("زیرمجموعه کدام شاخه باشد؟", style = MaterialTheme.typography.titleSmall)
+                Text(
+                    "دسته والد یعنی این شاخه‌ی جدید داخل کدوم دسته‌ی بزرگ‌تر قرار بگیره. مثلاً " +
+                        "«تاکسی» و «بنزین» هر دو می‌تونن زیرمجموعه‌ی «حمل‌ونقل» باشن — این‌طوری هم " +
+                        "جدا از هم دیده می‌شن، هم توی گزارش‌ها زیر یک عنوان کلی جمع می‌شن. اگر مطمئن " +
+                        "نیستید، «بدون والد» را انتخاب کنید.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     RadioButton(selected = parentId == null, onClick = { parentId = null })
                     Text("بدون والد")

@@ -229,7 +229,7 @@ private fun AppRoot(
                 rules = rules,
                 categories = categories,
                 counterparties = counterparties,
-                onAdd = { pattern, categoryId, counterpartyId -> viewModel.addRule(pattern, categoryId, counterpartyId) },
+                onAdd = { pattern, categoryId, counterpartyId, action -> viewModel.addRule(pattern, categoryId, counterpartyId, action) },
                 onDelete = { viewModel.deleteRule(it) },
                 onBack = { overlay = null }
             )
@@ -241,6 +241,7 @@ private fun AppRoot(
                 onDismiss = { viewModel.dismissUnidentifiedSms(it) },
                 onDismissAll = { viewModel.dismissAllUnidentifiedSms() },
                 onExport = { viewModel.exportUnidentifiedSms() },
+                onIgnoreSimilar = { item, pattern -> viewModel.ignoreSimilarAndDismiss(item, pattern) },
                 onBack = { overlay = null }
             )
             return
@@ -396,11 +397,7 @@ private fun AppRoot(
                         ),
                         smartSuggestions = smartSuggestions,
                         lastScanTimestamp = lastScanTimestamp,
-                        backupReminderVisible = shouldShowBackupReminder,
-                        lastBackupTimestamp = lastLocalBackupTimestamp,
                         smsPermissionGranted = smsPermissionGranted,
-                        onCreateBackup = { viewModel.createLocalBackup() },
-                        onSnoozeBackupReminder = { viewModel.snoozeBackupReminder() },
                         onRequestSmsPermission = onRequestSmsPermission,
                         onAcceptSuggestion = { viewModel.acceptSuggestion(it) },
                         onRejectSuggestion = { viewModel.rejectSuggestion(it) },
@@ -416,6 +413,8 @@ private fun AppRoot(
                         onOpenChecks = { tab = Tab.CHECKS },
                         onOpenCounterparties = { tab = Tab.COUNTERPARTIES },
                         onSaveNotes = { txn, notes -> viewModel.updateTransactionNotes(txn.id, notes) },
+                        onLinkTransfer = { txn, other -> viewModel.linkAsTransfer(txn.id, other.id) },
+                        onUnlinkTransfer = { txn -> viewModel.unlinkTransfer(txn.id) },
                         onViewSmsContext = { sender, timestamp -> overlay = Overlay.SmsContext(sender, timestamp) }
                     )
                 }
