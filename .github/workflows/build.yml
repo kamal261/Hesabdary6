@@ -1,0 +1,33 @@
+name: Build Android APK
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: دریافت کدها
+      uses: actions/checkout@v4
+
+    - name: نصب Java 17
+      uses: actions/setup-java@v3
+      with:
+        distribution: 'temurin'
+        java-version: '17'
+
+    - name: ساخت APK
+      run: |
+        chmod +x gradlew
+        ./gradlew assembleDebug
+
+    - name: آپلود فایل APK
+      uses: actions/upload-artifact@v4
+      with:
+        name: Hesabdary6-app
+        path: app/build/outputs/apk/debug/*.apk
