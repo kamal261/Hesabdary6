@@ -8,6 +8,7 @@
 package com.kamal.smsfinance.sms
 
 import com.kamal.smsfinance.data.TransactionType
+import com.kamal.smsfinance.sms.SmsDateExtractor
 
 /**
  * Outcome of trying to parse one SMS.
@@ -64,7 +65,7 @@ object SmsParser {
         "سامان" to listOf("Saman", "SAMAN", "سامان", "10000770", "10005010"),
         "ملی" to listOf("BMI", "10000019", "ملی ایران", "بانک ملی"),
         "تجارت" to listOf("Tejarat", "10000017", "تجارت"),
-        "صادرات" to listOf("Saderat", "10000019", "صادرات"),
+        "صادرات" to listOf("Saderat", "صادرات"),
         "کشاورزی" to listOf("Keshavarzi", "10000160", "کشاورزی"),
         "رفاه" to listOf("Refah", "10000144", "رفاه کارگران"),
         "اقتصاد نوین" to listOf("EN Bank", "10000079", "اقتصادنوین"),
@@ -293,9 +294,10 @@ object SmsParser {
         if (IGNORE_KEYWORDS.any { normalizedBody.contains(it) }) return SmsParseResult.Ignored
 
         val isKnownBank = isKnownBankSender(sender)
-        // A URL is a strong promotional/redirect signal. Keeping it out even for a known bank
-        // sender avoids treating tracking and loan-offer links as financial transactions.
-        if (URL_REGEX.containsMatchIn(normalizedBody)) return SmsParseResult.Ignored
+        // A URL is a strong promotional/redirect signal -- but ONLY when the sender ISN'T a
+        // known bank, because real banks occasionally include a receipt/tracking link (see the
+        // URL_REGEX doc above). Otherwise a genuine bank SMS with a link gets silently dropped.
+        if (URL_REGEX.containsMatchIn(normalizedBody) && !isKnownBank) return SmsParseResult.Ignored
 
         val workingBody = truncatePromoTail(normalizedBody)
 
@@ -313,7 +315,7 @@ object SmsParser {
                     type = type,
                     bankName = bank,
                     description = description,
-                    timestamp = timestamp,
+                    timestamp = SmsDateExtractor.extract(body, timestamp),
                     rawSms = body,
                     accountTail = tail,
                     defaultCategoryName = defaultCategoryNameFor(type, workingBody)

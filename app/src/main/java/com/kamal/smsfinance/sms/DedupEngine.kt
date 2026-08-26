@@ -1,6 +1,7 @@
-package com.kamal.smsfinance.sms
+﻿package com.kamal.smsfinance.sms
 
 import java.security.MessageDigest
+import java.util.Collections
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 
@@ -43,7 +44,7 @@ object DedupEngine {
             pruneOldEntries(now)
         }
 
-        val timestamps = seenHashes.getOrPut(hash) { mutableListOf() }
+        val timestamps = seenHashes.getOrPut(hash) { Collections.synchronizedList(mutableListOf<Long>()) }
         
         // Sliding window check: any existing timestamp within ±DEDUP_WINDOW_MILLIS?
         val isDup = timestamps.any { existingTs ->

@@ -56,6 +56,17 @@ interface TransactionDao {
     """)
     suspend fun existsExact(sender: String, rawSms: String, date: Long): Int
 
+    // Returns the id of an existing row matching the exact same SMS (sender + raw
+    // text + date), or null if none. Used by restore so a skipped (already-present)
+    // transaction still maps oldId -> the existing row's id, keeping check/linkedCheck
+    // links intact instead of silently dropping them.
+    @Query("""
+        SELECT id FROM transactions
+        WHERE smsSender = :sender AND rawSms = :rawSms AND date = :date
+        LIMIT 1
+    """)
+    suspend fun findExactId(sender: String, rawSms: String, date: Long): Long?
+
     // Fallback dedup guard: banks occasionally change their SMS short-code
     // (sender), which would defeat existsExact() and cause a duplicate row
     // for the same real-world transaction. When the SMS exposed an account

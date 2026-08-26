@@ -1,4 +1,4 @@
-package com.kamal.smsfinance.util
+﻿package com.kamal.smsfinance.util
 
 import java.util.Calendar
 
@@ -78,5 +78,61 @@ object JalaliDate {
     fun formatDateFriendly(epochMillis: Long): String {
         val (y, m, d) = fromEpochMillis(epochMillis)
         return toPersianDigits("$d ${MONTH_NAMES[m - 1]} $y")
+    }
+
+    /**
+     * Epoch millis of 00:00:00 local on the FIRST DAY of the Jalali month that
+     * contains [now]. Used by "this month" filters so they align with the
+     * Persian calendar instead of the Gregorian one.
+     */
+    fun jalaliMonthStartEpoch(now: Long): Long {
+        val (jy, jm, _) = fromEpochMillis(now)
+        val (gy, gm, gd) = jalaliToGregorian(jy, jm, 1)
+        val cal = Calendar.getInstance()
+        cal.clear()
+        cal.set(gy, gm - 1, gd, 0, 0, 0)
+        cal.set(Calendar.MILLISECOND, 0)
+        return cal.timeInMillis
+    }
+
+    // Jalali (y,m,d) -> Gregorian (y,m,d). Faithful port of the jalaali-js
+    // arithmetic conversion (same algorithm as SmsDateExtractor), kept here as
+    // the canonical date math so all Jalali logic can eventually funnel through
+    // this single module.
+    internal fun jalaliToGregorian(jy: Int, jm: Int, jd: Int): Triple<Int, Int, Int> {
+        val breaks = intArrayOf(-61, 9, 38, 199, 426, 686, 756, 818, 1111, 1181, 1210, 1635, 2060, 2097, 2192, 2262, 2324, 2394, 2456, 3178)
+        val gy = jy + 621
+        var leapJ = -14
+        var jp = breaks[0]
+        var jump = 0
+        var jm2 = 0
+        for (i in 1 until breaks.size) {
+            jm2 = breaks[i]
+            jump = jm2 - jp
+            if (jy < jm2) break
+            leapJ += jump / 33 * 8 + (jump % 33) / 4
+            jp = jm2
+        }
+        val n = jy - jp
+        leapJ += (n / 33) * 8 + ((n % 33) + 3) / 4
+        if (jump % 33 == 4 && jump - n == 4) leapJ += 1
+        val leapG = gy / 4 - (gy / 100 + 1) * 3 / 4 - 150
+        val march = 20 + leapJ - leapG
+
+        fun g2d(gy2: Int, gm: Int, gd: Int): Int {
+            var d = ((gy2 + (gm - 8) / 6 + 100100) * 1461) / 4 +
+                (153 * ((gm + 9) % 12) + 2) / 5 + gd - 34840408
+            d = d - ((gy2 + 100100 + (gm - 8) / 6) / 100) * 3 / 4 + 752
+            return d
+        }
+        val jdn = g2d(gy, 3, march) + (jm - 1) * 31 - jm / 7 * (jm - 7) + jd - 1
+
+        var j = 4 * jdn + 139361631
+        j = j + ((4 * jdn + 183187720) / 146097) * 3 / 4 * 4 - 3908
+        val di = (j % 1461) / 4 * 5 + 308
+        val gd2 = (di % 153) / 5 + 1
+        val gm2 = (di / 153) % 12 + 1
+        val gy2 = j / 1461 - 100100 + (8 - gm2) / 6
+        return Triple(gy2, gm2, gd2)
     }
 }

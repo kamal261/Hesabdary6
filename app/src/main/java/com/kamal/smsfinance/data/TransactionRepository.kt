@@ -264,7 +264,18 @@ class TransactionRepository(
                 date = parsed.timestamp,
                 windowMillis = TimeUnit.MINUTES.toMillis(10)
             ) > 0
-            if (similar) return false
+            if (similar) {
+                // Per the project's "Zero Silent Loss" principle, a second near-identical
+                // transaction is NOT silently discarded. Park it in the review queue so the user
+                // can confirm whether it's a genuine duplicate or two distinct transactions that
+                // happen to share the same amount.
+                if (unidentifiedSmsDao.existsExact(parsed.sender, parsed.rawSms, parsed.timestamp) == 0) {
+                    unidentifiedSmsDao.insert(
+                        UnidentifiedSms(sender = parsed.sender, body = parsed.rawSms, timestamp = parsed.timestamp)
+                    )
+                }
+                return false
+            }
         }
 
         val ruleMatch = ruleEngine.evaluate(parsed.rawSms, smartRuleDao.getAllRulesOnce())

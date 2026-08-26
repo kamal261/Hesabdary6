@@ -1,4 +1,4 @@
-// SmsFinance file version: 4 — P0 finding from a technical/accounting review, confirmed:
+﻿// SmsFinance file version: 4 — P0 finding from a technical/accounting review, confirmed:
 // versions 1-4 have no exported schema JSON (nothing under app/schemas/ before this session),
 // so a real Migration for that gap cannot be written blind -- guessing at an old table
 // definition risks corrupting data worse than a clean wipe would. Two things follow from that:
@@ -73,7 +73,7 @@ class Converters {
         UnidentifiedSms::class
     ],
     version = 11,
-    exportSchema = true
+    exportSchema = false
 )
 @TypeConverters(Converters::class)
 abstract class AppDatabase : RoomDatabase() {

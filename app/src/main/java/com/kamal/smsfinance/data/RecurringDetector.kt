@@ -1,11 +1,11 @@
-package com.kamal.smsfinance.data
+﻿package com.kamal.smsfinance.data
 
 import java.util.concurrent.TimeUnit
 import kotlin.math.abs
 
 /**
  * Pure, DB-free detector: groups an in-memory list of transactions by
- * (bank, type) and walks consecutive pairs looking for a monthly or
+ * (bank, type) and compares each transaction against earlier ones looking for a monthly or
  * biweekly cadence with a close-enough amount -- covers bills,
  * installments ("قسط"), and recurring payments like rent/salary whose
  * amount can drift slightly month to month. Tolerant of one missed month.
@@ -19,6 +19,9 @@ object RecurringDetector {
 
     private val MONTHLY_RANGE = 26L..34L // days
     private val BIWEEKLY_RANGE = 12L..16L // days
+    // One missed month (~2x monthly) still counts as recurring, matching the
+    // detector's "tolerant of one missed month" contract.
+    private val BI_MONTHLY_RANGE = 54L..66L // days
 
     // Amounts within this fraction of each other still count as "the same"
     // payment (e.g. rent that goes up slightly, or a salary with minor
@@ -36,14 +39,19 @@ object RecurringDetector {
         for ((_, group) in groups) {
             if (group.size < 2) continue
             val sorted = group.sortedBy { it.date }
+            // Compare each transaction against ANY earlier one in the group, so a
+            // single missed cycle (~2 months) still links the pair together.
             for (i in 1 until sorted.size) {
-                val prev = sorted[i - 1]
                 val curr = sorted[i]
-                val gapDays = TimeUnit.MILLISECONDS.toDays(abs(curr.date - prev.date))
-                val cadenceMatches = gapDays in MONTHLY_RANGE || gapDays in BIWEEKLY_RANGE
-                if (cadenceMatches && amountsAreClose(prev.amountToman, curr.amountToman)) {
-                    recurringIds.add(prev.id)
-                    recurringIds.add(curr.id)
+                for (j in 0 until i) {
+                    val prev = sorted[j]
+                    val gapDays = TimeUnit.MILLISECONDS.toDays(abs(curr.date - prev.date))
+                    val cadenceMatches = gapDays in MONTHLY_RANGE || gapDays in BIWEEKLY_RANGE || gapDays in BI_MONTHLY_RANGE
+                    if (cadenceMatches && amountsAreClose(prev.amountToman, curr.amountToman)) {
+                        recurringIds.add(prev.id)
+                        recurringIds.add(curr.id)
+                        break
+                    }
                 }
             }
         }

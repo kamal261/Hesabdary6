@@ -50,6 +50,8 @@ object GoogleSheetsUploader {
     suspend fun upload(webhookUrl: String, transactions: List<Transaction>): UploadResult =
         withContext(Dispatchers.IO) {
             if (webhookUrl.isBlank()) return@withContext UploadResult.Failure("آدرس webhook تنظیم نشده است")
+            if (!webhookUrl.startsWith("https://"))
+                return@withContext UploadResult.Failure("فقط آدرس https پشتیبانی می‌شود (ارسال داده‌های مالی روی اتصال ناامن ممنوع است)")
 
             try {
                 val array = JSONArray()

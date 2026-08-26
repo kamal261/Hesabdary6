@@ -61,6 +61,9 @@ object BackupManager {
      * restore transaction, so a later parse/insert failure rolls the deletion back too. */
     private suspend fun wipeForRestoreInsideTransaction(db: AppDatabase) {
         db.transactionDao().deleteAll()
+        // Also clear the Unidentified review queue, otherwise old "needs review" rows linger
+        // and future matching SMS get wrongly flagged as duplicates after a full restore.
+        db.unidentifiedSmsDao().dismissAll()
         db.counterpartyReminderDao().getAllOnce().forEach { db.counterpartyReminderDao().delete(it) }
         db.counterpartyDao().getAllOnce().forEach { db.counterpartyDao().delete(it) }
         db.checkDao().getAllOnce().forEach { db.checkDao().delete(it) }
@@ -159,6 +162,7 @@ object BackupManager {
                     put("pattern", rule.pattern)
                     put("categoryId", rule.categoryId.orNull())
                     put("counterpartyId", rule.counterpartyId.orNull())
+                    put("action", rule.action.name)
                     put("createdAt", rule.createdAt)
                 })
             }
@@ -307,6 +311,21 @@ object BackupManager {
                     for (i in 0 until arr.length()) {
                         val o = arr.getJSONObject(i)
                         val oldId = o.getLong("id")
+                        // Dedup against the existing database so a repeated restore (merge path,
+                        // the `restoreBackup` entry point) doesn't create duplicate transactions.
+                        // The replace path wipes first, so this branch is only reached for new rows.
+                        // When an exact duplicate already exists we still map oldId -> the EXISTING
+                        // row's id, so checks/linkedCheck links that reference this transaction are
+                        // preserved instead of silently dropped (otherwise settlement links break).
+                        val existingId = db.transactionDao().findExactId(
+                            o.optStringOrNull("smsSender") ?: "",
+                            o.optStringOrNull("rawSms") ?: "",
+                            o.getLong("date")
+                        )
+                        if (existingId != null) {
+                            transactionIdMap[oldId] = existingId
+                            continue
+                        }
                         val newId = db.transactionDao().insert(
                             Transaction(
                                 amountToman = o.getLong("amountToman"),
@@ -396,6 +415,7 @@ object BackupManager {
                                 pattern = o.getString("pattern"),
                                 categoryId = o.optLongOrNull("categoryId")?.let { categoryIdMap[it] },
                                 counterpartyId = o.optLongOrNull("counterpartyId")?.let { counterpartyIdMap[it] },
+                                action = RuleAction.valueOf(o.optString("action", "CATEGORIZE")),
                                 createdAt = o.optLong("createdAt", System.currentTimeMillis())
                             )
                         )

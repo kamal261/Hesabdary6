@@ -7,8 +7,8 @@ package com.kamal.smsfinance
  */
 object BuildInfo {
     const val BRANCH_LABEL = "manus-version"
-    const val VERSION_NAME = "0.6.6"
-    const val VERSION_CODE = 13
+const val VERSION_NAME = "0.6.7"
+const val VERSION_CODE = 14
     const val BUILD_LABEL = "v0.6.6 — رفع باگ ریال/تومان، قوانین نادیده‌گرفتن، جابجایی بین حساب‌ها"
     const val BUILD_DATE = "2026-08-25"
     const val BUILD_DATE_SHAMSI = "1405-06-03"

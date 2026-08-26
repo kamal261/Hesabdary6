@@ -603,7 +603,10 @@ class TransactionViewModel(application: Application) : AndroidViewModel(applicat
         viewModelScope.launch {
             _isLoading.value = true
             try {
-                val file = CsvExporter.export(getApplication(), allTransactions.value, recurringIds(allTransactions.value))
+                // Read a fresh snapshot from the repository rather than the StateFlow .value
+                // (which may still be empty if the list screen hasn't been collected yet).
+                val txns = repository.allTransactions.first()
+                val file = CsvExporter.export(getApplication(), txns, recurringIds(txns))
                 _lastExportedFile.value = file
                 _message.value = UiMessage("فایل CSV با موفقیت ساخته شد")
             } catch (e: Exception) {
@@ -839,10 +842,9 @@ class TransactionViewModel(application: Application) : AndroidViewModel(applicat
         reportable(list).filter { categoryKindOf(it, categories) == CategoryKind.DEBT_PAYMENT }.sumOf { it.amountToman }
 
     fun thisMonthTransactions(list: List<Transaction> = allTransactions.value): List<Transaction> {
-        val cal = Calendar.getInstance()
-        cal.set(Calendar.DAY_OF_MONTH, 1)
-        cal.set(Calendar.HOUR_OF_DAY, 0); cal.set(Calendar.MINUTE, 0); cal.set(Calendar.SECOND, 0)
-        val startOfMonth = cal.timeInMillis
+        // Use the Jalali (Persian) month boundary, not the Gregorian one, so the
+        // "this month" figure matches the Iranian calendar the user expects.
+        val startOfMonth = JalaliDate.jalaliMonthStartEpoch(System.currentTimeMillis())
         return list.filter { it.date >= startOfMonth }
     }
 
